@@ -23,19 +23,72 @@ jobs:
       - name: Install create-dmg
         run: brew install create-dmg
 
-      - name: List Files (Debug Info)
-        run: ls -R
-
-      - name: Build App (Scheme Method)
+      - name: Import Developer ID Certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_CERT }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_CERT_PASSWORD }}
         run: |
-          echo "🏗️ Building SpeakType using SCHEME..."
+          echo "🔐 Importing Developer ID certificate..."
+          
+          # Create temporary keychain
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          
+          # Create and unlock keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          
+          # Import certificate
+          echo "$CERTIFICATE_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" \
+            -P "$CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+          
+          # Set keychain as default
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          
+          # Allow codesign to use the keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          
+          echo "✅ Certificate imported successfully"
+
+      - name: Build and Sign App
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "🏗️ Building and signing SpeakType..."
           
           xcodebuild -scheme "speaktype" \
             -configuration Release \
             -derivedDataPath build \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            ENABLE_HARDENED_RUNTIME=YES \
             clean build
+          
+          echo "✅ Build and signing complete"
+
+      - name: Verify Code Signature
+        run: |
+          echo "🔍 Verifying code signature..."
+          APP_PATH=$(find build -name "speaktype.app" | head -n 1)
+          
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ Error: Could not find speaktype.app!"
+            exit 1
+          fi
+          
+          echo "App path: $APP_PATH"
+          codesign --verify --deep --strict "$APP_PATH"
+          codesign --display --verbose=2 "$APP_PATH"
+          
+          echo "✅ Code signature verified"
 
       - name: Create DMG Background
         run: |
@@ -51,12 +104,14 @@ jobs:
             echo "⚠️  No background generator script found; continuing"
           fi
 
-      - name: Locate App & Create DMG
+      - name: Create DMG
         run: |
+          echo "💿 Creating DMG..."
           VERSION="${GITHUB_REF_NAME#v}"
           DMG_NAME="SpeakType-${VERSION}.dmg"
           echo "DMG_NAME=$DMG_NAME" >> "$GITHUB_ENV"
-          # Find the app anywhere in the build folder
+          
+          # Find the app
           APP_PATH=$(find build -name "speaktype.app" | head -n 1)
 
           if [ -z "$APP_PATH" ]; then
@@ -66,7 +121,6 @@ jobs:
           
           echo "✅ Found App at: $APP_PATH"
 
-          # Create DMG with custom background
           # Create background if needed
           if [ ! -f "dmg-assets/dmg-background.png" ]; then
             cd dmg-assets
@@ -87,9 +141,56 @@ jobs:
             --app-drop-link 480 170 \
             "$DMG_NAME" \
             "$APP_PATH"
+          
+          echo "✅ DMG created: $DMG_NAME"
+
+      - name: Notarize DMG
+        env:
+          NOTARIZATION_APPLE_ID: ${{ secrets.NOTARIZATION_APPLE_ID }}
+          NOTARIZATION_PASSWORD: ${{ secrets.NOTARIZATION_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "🔒 Submitting DMG for notarization..."
+          
+          # Submit for notarization and wait
+          xcrun notarytool submit "${{ env.DMG_NAME }}" \
+            --apple-id "$NOTARIZATION_APPLE_ID" \
+            --password "$NOTARIZATION_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait \
+            --timeout 30m
+          
+          echo "✅ Notarization complete"
+
+      - name: Staple Notarization Ticket
+        run: |
+          echo "📎 Stapling notarization ticket to DMG..."
+          xcrun stapler staple "${{ env.DMG_NAME }}"
+          
+          # Verify stapling
+          xcrun stapler validate "${{ env.DMG_NAME }}"
+          
+          echo "✅ Notarization ticket stapled successfully"
+
+      - name: Verify Notarization
+        run: |
+          echo "🔍 Verifying notarization status..."
+          spctl --assess --type open --context context:primary-signature --verbose "${{ env.DMG_NAME }}"
+          echo "✅ DMG is properly notarized and will pass Gatekeeper"
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.DMG_NAME }}
           generate_release_notes: true
+
+      - name: Cleanup Keychain
+        if: always()
+        run: |
+          echo "🧹 Cleaning up temporary keychain..."
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+          rm -f "$RUNNER_TEMP/certificate.p12" || true
+          echo "✅ Cleanup complete"
