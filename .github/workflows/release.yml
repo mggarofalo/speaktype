@@ -165,7 +165,31 @@ jobs:
       - name: Staple Notarization Ticket
         run: |
           echo "📎 Stapling notarization ticket to DMG..."
-          xcrun stapler staple "${{ env.DMG_NAME }}"
+          
+          # Sometimes Apple's CloudKit needs a moment to make the ticket available
+          # Retry stapling with exponential backoff
+          MAX_ATTEMPTS=5
+          ATTEMPT=1
+          DELAY=5
+          
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Attempt $ATTEMPT of $MAX_ATTEMPTS..."
+            
+            if xcrun stapler staple "${{ env.DMG_NAME }}" 2>&1; then
+              echo "✅ Stapling successful!"
+              break
+            else
+              if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+                echo "❌ Stapling failed after $MAX_ATTEMPTS attempts"
+                exit 1
+              fi
+              
+              echo "⚠️  Stapling failed, waiting ${DELAY}s before retry..."
+              sleep $DELAY
+              DELAY=$((DELAY * 2))  # Exponential backoff
+              ATTEMPT=$((ATTEMPT + 1))
+            fi
+          done
           
           # Verify stapling
           xcrun stapler validate "${{ env.DMG_NAME }}"
