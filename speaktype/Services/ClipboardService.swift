@@ -1,76 +1,66 @@
-import Cocoa
 import ApplicationServices
+import Cocoa
 
 class ClipboardService {
     static let shared = ClipboardService()
-    
+
     // Dependency injection for license checking
     private var licenseManager: LicenseManager {
         return LicenseManager.shared
     }
-    
+
     private init() {}
-    
+
     // Copy text to system clipboard with optional promotional wrapper
     func copy(text: String) {
         let finalText = wrapTextIfNeeded(text)
-        
+
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(finalText, forType: .string)
-        
+
         // Verify write
         if let check = pasteboard.string(forType: .string), check == finalText {
-             print("✅ Clipboard Write Verified: '\(check.prefix(20))...'")
+            print("✅ Clipboard Write Verified: '\(check.prefix(20))...'")
         } else {
-             print("❌ Clipboard Write FAILED!")
+            print("❌ Clipboard Write FAILED!")
         }
     }
-    
+
     // Wrap text with promotional message for free users
     private func wrapTextIfNeeded(_ text: String) -> String {
         // License check disabled - always allow unwrapped text
-        // if licenseManager.isPro {
-            return text
-        // }
-        
-        // Add promotional text above and below
-        let promotionalText = "Upgrade to a lifetime subscription at speaktype.io"
-        let separator = "\n\n" // Double newline for spacing
-        
-        return """
-        \(promotionalText)\(separator)\(text)\(separator)\(promotionalText)
-        """
+        return text
     }
-    
+
     // Paste content (Simulate Cmd+V)
     func paste() {
         // Create a concurrent task to avoid blocking main thread if needed,
         // though CGEvent is fast.
         DispatchQueue.main.async {
             let source = CGEventSource(stateID: .hidSystemState)
-            
+
             // Command key down
             let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: true)
             cmdDown?.flags = .maskCommand
-            
+
             // 'V' key down
             let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
             vDown?.flags = .maskCommand
-            
+
             // 'V' key up
             let vUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
             vUp?.flags = .maskCommand
-            
+
             // Command key up
             let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: false)
-            
+
             // Post events
             cmdDown?.post(tap: .cghidEventTap)
             vDown?.post(tap: .cghidEventTap)
             vUp?.post(tap: .cghidEventTap)
             cmdUp?.post(tap: .cghidEventTap)
-            
+
             print("Simulated Cmd+V")
         }
     }
@@ -88,15 +78,16 @@ class ClipboardService {
             }
         }
     }
-    
+
     // Check if we have permission to send keystrokes
     var isAccessibilityTrusted: Bool {
         return AXIsProcessTrusted()
     }
-    
+
     // Request permission via system prompt
     func requestAccessibilityPermission() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        let options =
+            [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
     }
 }

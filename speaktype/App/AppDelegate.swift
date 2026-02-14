@@ -1,6 +1,6 @@
-import SwiftUI
-import KeyboardShortcuts
 import Combine
+import KeyboardShortcuts
+import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var miniRecorderController: MiniRecorderWindowController?
@@ -10,13 +10,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Initialize the controller
         miniRecorderController = MiniRecorderWindowController()
-        
+
         // Setup dynamic hotkey monitoring based on user selection
         setupHotkeyMonitoring()
-        
+
         // Check for updates on app launch
         checkForUpdatesOnLaunch()
-        
+
         // Listen for update window requests
         UpdateService.shared.showUpdateWindowPublisher
             .receive(on: DispatchQueue.main)
@@ -24,31 +24,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.showUpdateWindow()
             }
             .store(in: &cancellables)
-        
 
     }
-    
+
     // Critical: Prevent the app from quitting when the Mini Recorder panel closes.
     // Since we are a Menu Bar app (mostly), we must stay alive.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
     }
-    
+
     // MARK: - Hotkey Monitoring
-    
+
     private func setupHotkeyMonitoring() {
-        // Get selected hotkey from UserDefaults (default to Fn)
-        let selectedHotkey = getSelectedHotkey()
-        
         // Add global monitor for hotkey events
         NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             guard let self = self else { return }
             let currentHotkey = self.getSelectedHotkey()
-            
+
             // Check if the hotkey is currently pressed
-            let isPressed = event.keyCode == currentHotkey.keyCode && 
-                           event.modifierFlags.contains(currentHotkey.modifierFlag)
-            
+            let isPressed =
+                event.keyCode == currentHotkey.keyCode
+                && event.modifierFlags.contains(currentHotkey.modifierFlag)
+
             if isPressed && !self.isHotkeyPressed {
                 // Key was just pressed down - start recording
                 self.isHotkeyPressed = true
@@ -59,15 +56,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.miniRecorderController?.stopRecording()
             }
         }
-        
+
         // Add local monitor for hotkey events
         NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             guard let self = self else { return event }
             let currentHotkey = self.getSelectedHotkey()
-            
-            let isPressed = event.keyCode == currentHotkey.keyCode && 
-                           event.modifierFlags.contains(currentHotkey.modifierFlag)
-            
+
+            let isPressed =
+                event.keyCode == currentHotkey.keyCode
+                && event.modifierFlags.contains(currentHotkey.modifierFlag)
+
             if isPressed && !self.isHotkeyPressed {
                 self.isHotkeyPressed = true
                 self.miniRecorderController?.startRecording()
@@ -78,7 +76,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return event
         }
     }
-    
+
     private func getSelectedHotkey() -> HotkeyOption {
         // Migration: Check if old useFnKey setting exists
         if UserDefaults.standard.object(forKey: "useFnKey") != nil {
@@ -90,29 +88,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return .fn
             }
         }
-        
+
         // Load selected hotkey
         if let rawValue = UserDefaults.standard.string(forKey: "selectedHotkey"),
-           let option = HotkeyOption(rawValue: rawValue) {
+            let option = HotkeyOption(rawValue: rawValue)
+        {
             return option
         }
-        
+
         // Default to Fn
         return .fn
     }
-    
+
     // MARK: - Update Checking
-    
+
     private func checkForUpdatesOnLaunch() {
         let updateService = UpdateService.shared
         let autoUpdate = UserDefaults.standard.bool(forKey: "autoUpdate")
-        
+
         // Only check if auto-update is enabled and enough time has passed
         guard autoUpdate && updateService.shouldCheckForUpdates() else { return }
-        
+
         Task {
             await updateService.checkForUpdates(silent: true)
-            
+
             // If update is available and we should show reminder
             if updateService.availableUpdate != nil && updateService.shouldShowReminder() {
                 // Show update window on main thread
@@ -122,13 +121,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     }
-    
+
     private func showUpdateWindow() {
         guard let update = UpdateService.shared.availableUpdate else { return }
-        
+
         let updateSheetView = UpdateSheet(update: update)
         let hostingController = NSHostingController(rootView: updateSheetView)
-        
+
         let window = NSWindow(contentViewController: hostingController)
         window.title = "Software Update"
         window.styleMask = [.titled, .closable]
@@ -136,7 +135,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.center()
         window.isMovableByWindowBackground = true
         window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
     }
 }
-
