@@ -173,22 +173,32 @@ jobs:
         run: |
           echo "🔒 Submitting DMG for notarization..."
           
-          # Submit for notarization and capture output
-          OUTPUT=$(xcrun notarytool submit "${{ env.DMG_NAME }}" \
+          # Submit and wait (progress will stream in real-time)
+          # Capture just the submission ID from initial output
+          SUBMIT_OUTPUT=$(xcrun notarytool submit "${{ env.DMG_NAME }}" \
             --apple-id "$NOTARIZATION_APPLE_ID" \
             --password "$NOTARIZATION_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --wait \
-            --timeout 30m 2>&1)
+            2>&1)
           
-          echo "$OUTPUT"
-          
-          # Extract submission ID
-          SUBMISSION_ID=$(echo "$OUTPUT" | grep "id:" | head -1 | awk '{print $2}')
+          SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | grep "id:" | head -1 | awk '{print $2}')
           echo "Submission ID: $SUBMISSION_ID"
           
-          # Check if notarization was successful
-          if echo "$OUTPUT" | grep -q "status: Accepted"; then
+          # Wait for completion (shows progress)
+          xcrun notarytool wait "$SUBMISSION_ID" \
+            --apple-id "$NOTARIZATION_APPLE_ID" \
+            --password "$NOTARIZATION_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID"
+          
+          # Check final status
+          STATUS_OUTPUT=$(xcrun notarytool info "$SUBMISSION_ID" \
+            --apple-id "$NOTARIZATION_APPLE_ID" \
+            --password "$NOTARIZATION_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID")
+          
+          echo "$STATUS_OUTPUT"
+          
+          if echo "$STATUS_OUTPUT" | grep -q "status: Accepted"; then
             echo "✅ Notarization successful!"
           else
             echo "❌ Notarization failed!"
