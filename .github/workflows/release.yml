@@ -144,6 +144,25 @@ jobs:
           
           echo "✅ DMG created: $DMG_NAME"
 
+      - name: Sign DMG
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "🔐 Signing DMG..."
+          
+          # Sign the DMG itself (required for notarization)
+          codesign --sign "Developer ID Application" \
+            --force \
+            --timestamp \
+            --options runtime \
+            "${{ env.DMG_NAME }}"
+          
+          # Verify DMG signature
+          codesign --verify --deep --strict "${{ env.DMG_NAME }}"
+          codesign --display --verbose=2 "${{ env.DMG_NAME }}"
+          
+          echo "✅ DMG signed successfully"
+
       - name: Notarize DMG
         env:
           NOTARIZATION_APPLE_ID: ${{ secrets.NOTARIZATION_APPLE_ID }}
@@ -152,15 +171,33 @@ jobs:
         run: |
           echo "🔒 Submitting DMG for notarization..."
           
-          # Submit for notarization and wait
-          xcrun notarytool submit "${{ env.DMG_NAME }}" \
+          # Submit for notarization and capture output
+          OUTPUT=$(xcrun notarytool submit "${{ env.DMG_NAME }}" \
             --apple-id "$NOTARIZATION_APPLE_ID" \
             --password "$NOTARIZATION_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait \
-            --timeout 30m
+            --timeout 30m 2>&1)
           
-          echo "✅ Notarization complete"
+          echo "$OUTPUT"
+          
+          # Extract submission ID
+          SUBMISSION_ID=$(echo "$OUTPUT" | grep "id:" | head -1 | awk '{print $2}')
+          echo "Submission ID: $SUBMISSION_ID"
+          
+          # Check if notarization was successful
+          if echo "$OUTPUT" | grep -q "status: Accepted"; then
+            echo "✅ Notarization successful!"
+          else
+            echo "❌ Notarization failed!"
+            echo ""
+            echo "Fetching detailed logs..."
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --apple-id "$NOTARIZATION_APPLE_ID" \
+              --password "$NOTARIZATION_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID"
+            exit 1
+          fi
 
       - name: Staple Notarization Ticket
         run: |
