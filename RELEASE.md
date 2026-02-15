@@ -1,18 +1,12 @@
 # Release Process
 
-SpeakType releases are now built and notarized **locally**, then uploaded to GitHub using GitHub CLI.
-
-This approach provides:
-- ✅ **Faster releases** (2-5 min vs 30+ min timeout)
-- ✅ **Better debugging** (see errors immediately)
-- ✅ **No CI complexity** (all work done on your Mac)
-- ✅ **Secure credentials** (stored in macOS Keychain)
+SpeakType releases are **fully automated** with a single command. The script handles everything: version bumping, building, signing, notarization, and uploading.
 
 ## Release Criteria
-Use your judgment, but a release is usually warranted when one or more are true:
+Use your judgment, but a release is usually warranted when:
 - A user-visible feature or UX improvement lands
 - A bugfix affects multiple users or a core flow
-- Performance or stability improvements are measurable or noticeable
+- Performance or stability improvements are measurable
 
 ## Prerequisites
 
@@ -20,103 +14,76 @@ Use your judgment, but a release is usually warranted when one or more are true:
 
 **1. Code Signing Certificate**
 
-You must have a valid **Developer ID Application** certificate installed.
-
-Verify it's installed:
+Verify you have a Developer ID Application certificate:
 ```bash
 security find-identity -v -p codesigning
 # Should show: "Developer ID Application: ..."
 ```
 
-If not installed, see [Apple's documentation](https://developer.apple.com/support/code-signing/) on obtaining a Developer ID certificate.
-
 **2. App-Specific Password**
 
-You'll need an app-specific password from your Apple account:
+Get from [appleid.apple.com](https://appleid.apple.com) → Security → App-Specific Passwords
 
-1. Go to [appleid.apple.com](https://appleid.apple.com)
-2. Sign in with `mail2048labs@gmail.com`
-3. Security → App-Specific Passwords
-4. Generate new password (or use existing notarization password)
+**Note:** The release script will prompt for this on first run and store it in Keychain.
 
-**Note:** The build script will prompt for this password on first run and store it securely in your macOS Keychain.
-
-**3. GitHub CLI** (optional, for uploading releases)
+**3. GitHub CLI** (optional)
 
 ```bash
 brew install gh
 gh auth login
 ```
 
+---
+
 ## Creating a Release
 
-### Step 1: Bump Version
-
-Use the release script to update version numbers and changelog:
+### Auto-Bump Patch Version (Recommended)
 
 ```bash
-scripts/release.sh 1.0.7
+./scripts/release.sh
 ```
 
-This automatically:
-- Updates `MARKETING_VERSION` in Xcode project
-- Increments `CURRENT_PROJECT_VERSION` (build number)
-- Updates `CHANGELOG.md` with release date
-- Creates a commit and git tag
+**What happens:**
 
-Then push:
-```bash
-git push origin HEAD
-git push origin v1.0.7
-```
+1. ✅ **Checks for uncommitted changes** - Script fails if you have any uncommitted work
+2. ✅ **Auto-bumps patch version** (e.g., 1.0.14 → 1.0.15)
+3. ✅ **Updates version in Xcode project** - MARKETING_VERSION and CURRENT_PROJECT_VERSION
+4. ✅ **Updates CHANGELOG** with release date
+5. ✅ **Commits changes locally** - Creates commit and git tag (not pushed yet!)
+6. ✅ **Builds and signs the app** - Release configuration with Developer ID
+7. ✅ **Creates and signs DMG**
+8. ✅ **Submits to Apple for notarization** (~2-5 minutes)
+9. ✅ **Staples the notarization ticket**
+10. ✅ **Prompts: Push to GitHub?** - Only after successful build
+11. ✅ **Prompts: Upload release?** - Only if you pushed
 
-### Step 2: Build and Notarize
+**Total time: ~6-8 minutes**
 
-Run the build script to create a signed, notarized DMG:
-
-```bash
-./scripts/build-and-notarize.sh v1.0.7
-```
-
-This script will:
-1. ✅ Build the Release configuration
-2. ✅ Code-sign the app with Developer ID
-3. ✅ Verify the signature
-4. ✅ Create the DMG installer
-5. ✅ Sign the DMG
-6. ✅ Submit to Apple for notarization (**2-5 minutes**)
-7. ✅ Wait for Apple's response
-8. ✅ Staple the notarization ticket
-9. ✅ Verify Gatekeeper acceptance
-
-Output: `SpeakType-1.0.7.dmg` (ready to distribute)
-
-### Step 3: Create GitHub Release
-
-Upload the notarized DMG to GitHub:
+### Specify Version Manually
 
 ```bash
-gh release create v1.0.7 SpeakType-1.0.7.dmg --generate-notes
+./scripts/release.sh 2.0.0
 ```
 
-Done! 🎉
+Same workflow, but uses your specified version.
 
-## Quick Reference
+---
 
-**First release ever:**
-```bash
-./scripts/build-and-notarize.sh v1.0.7
-# (will prompt for app-specific password on first run)
-gh release create v1.0.7 SpeakType-1.0.7.dmg --generate-notes
-```
+## What You'll Be Asked
 
-**Subsequent releases:**
-```bash
-scripts/release.sh 1.0.8
-git push origin HEAD && git push origin v1.0.8
-./scripts/build-and-notarize.sh v1.0.8
-gh release create v1.0.8 SpeakType-1.0.8.dmg --generate-notes
-```
+The script prompts you at key decision points:
+
+1. **🔼 Push v1.0.15 to GitHub? (y/n)**
+   - Asked AFTER successful build/notarization
+   - If you say `n`, the script exits and tells you how to undo the local commit
+   - Safe to say `n` to test the DMG first
+
+2. **📦 Upload DMG to GitHub releases? (y/n)**
+   - Only asked if you said `y` to push
+   - Uses GitHub CLI to create the release
+   - You can always upload manually later with: `gh release create v1.0.15 SpeakType-1.0.15.dmg --generate-notes`
+
+---
 
 ## Verification
 
