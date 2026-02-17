@@ -34,7 +34,7 @@ SpeakType is a **privacy-first, offline voice dictation tool** for macOS. Unlike
 
 - macOS 13.0+ (Ventura or newer)
 - Apple Silicon (M1+) recommended
-- 2GB free storage (for AI models)
+- 2GB available storage (for AI models)
 
 ### Download
 
@@ -79,14 +79,6 @@ make run            # Run app
 make clean          # Clean build
 make test           # Run tests
 make dmg            # Create DMG installer
-```
-
-### Release
-
-```bash
-scripts/release.sh 1.0.6
-git push origin HEAD
-git push origin v1.0.6
 ```
 
 ### Current Issues
@@ -134,7 +126,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Credits
 
 - [WhisperKit](https://github.com/argmaxinc/WhisperKit) by Argmax
-- [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) by Sindre Sorhus
 - [OpenAI Whisper](https://github.com/openai/whisper)
 
 ---
@@ -143,6 +134,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 **Made with ❤️ for developers**
 
-*Privacy-first • Open Source • Forever Free*
+*Privacy-first • Open Source *
 
 </div>
