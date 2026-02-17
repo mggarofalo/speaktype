@@ -48,12 +48,12 @@ struct MiniRecorderView: View {
         ZStack {
             backgroundView
 
-            if isWarmingUp {
+            if isWarmingUp || whisperService.isLoading {
                 HStack(spacing: 8) {
                     ProgressView()
                         .controlSize(.small)
                         .colorScheme(.dark)
-                    Text("Preparing model...")
+                    Text("Warming up model...")
                         .font(Typography.labelMedium)
                         .foregroundColor(.white.opacity(0.9))
                 }
@@ -83,9 +83,9 @@ struct MiniRecorderView: View {
                 .transition(.opacity)
             }
         }
-        .frame(width: 220, height: 50)  // Reduced overall size
+        .frame(width: 220, height: 50)
         .clipShape(RoundedRectangle(cornerRadius: 25))
-        .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 4)
+        .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 2)
         .contextMenu {
             modelSelectionMenu
         }
@@ -159,9 +159,12 @@ struct MiniRecorderView: View {
 
     private var backgroundView: some View {
         ZStack {
-            // Dark background with blur
+            // Dark background with blur, all clipped to capsule
             VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow, cornerRadius: 25)
-            Color.black.opacity(0.85)
+                .clipShape(RoundedRectangle(cornerRadius: 25))
+
+            RoundedRectangle(cornerRadius: 25)
+                .fill(Color.black.opacity(0.85))
 
             // Subtle border
             RoundedRectangle(cornerRadius: 25)

@@ -9,7 +9,7 @@ struct OnboardingView: View {
         GeometryReader { geometry in
             ZStack {
                 // Background - Match main app exactly
-                Color.black.ignoresSafeArea()
+                Color.bgApp.ignoresSafeArea()
 
                 // Content ZStack
                 ZStack {
@@ -57,7 +57,7 @@ struct WelcomePage: View {
             VStack(spacing: 14) {
                 Text("Welcome to")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Color.gray)
+                    .foregroundStyle(Color.textSecondary)
                     .textCase(.uppercase)
                     .tracking(2.5)
 
@@ -74,7 +74,7 @@ struct WelcomePage: View {
                     Text(" Private. Fast. Offline.")
                         .font(.system(size: 16, weight: .regular, design: .serif))
                         .italic()
-                        .foregroundStyle(Color.gray)
+                        .foregroundStyle(Color.textSecondary)
                 }
             }
             .multilineTextAlignment(.center)
@@ -115,11 +115,11 @@ struct GetStartedButton: View {
                     .font(.system(size: 12, weight: .medium))
                     .offset(x: isHovered ? 3 : 0)
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(Color.bgApp)
             .frame(width: 160, height: 44)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.black)
+                    .fill(Color.textPrimary)
             )
             .shadow(
                 color: Color.black.opacity(isHovered ? 0.2 : 0.1), radius: isHovered ? 12 : 6, x: 0,
@@ -155,7 +155,7 @@ struct PermissionsPage: View {
             VStack(spacing: 16) {
                 Text("QUICK SETUP")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.gray)
+                    .foregroundStyle(Color.textSecondary)
                     .textCase(.uppercase)
                     .tracking(2)
 
@@ -365,12 +365,12 @@ struct FeatureCard: View {
             // Icon with subtle background
             ZStack {
                 Circle()
-                    .fill(Color.black.opacity(0.05))
+                    .fill(Color.textPrimary.opacity(0.05))
                     .frame(width: 52, height: 52)
 
                 Image(systemName: icon)
                     .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(Color.black)
+                    .foregroundStyle(Color.textPrimary)
             }
 
             Spacer()
@@ -379,7 +379,7 @@ struct FeatureCard: View {
             // Title in serif
             Text(title)
                 .font(.system(size: 16, weight: .medium, design: .serif))
-                .foregroundStyle(Color.black)
+                .foregroundStyle(Color.textPrimary)
 
             Spacer()
                 .frame(height: 6)
@@ -387,7 +387,7 @@ struct FeatureCard: View {
             // Description
             Text(description)
                 .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(Color.gray)
+                .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -400,15 +400,15 @@ struct FeatureCard: View {
             ZStack {
                 // Base fill - always light for "floating card" effect
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color.white)
+                    .fill(Color.bgCard)
 
                 // Subtle inner border for depth
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(0.8),
-                                Color.gray.opacity(0.03),
+                                Color.bgCard.opacity(0.8),
+                                Color.textSecondary.opacity(0.03),
                             ],
                             startPoint: .top,
                             endPoint: .bottom
@@ -443,17 +443,17 @@ struct OnboardingPermissionRow: View {
             // Clean icon
             Image(systemName: isGranted ? "checkmark.circle.fill" : icon)
                 .font(.system(size: 24, weight: .regular))
-                .foregroundStyle(isGranted ? Color.green : Color.black.opacity(0.7))
+                .foregroundStyle(isGranted ? Color.green : Color.textPrimary.opacity(0.7))
                 .frame(width: 40)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Color.black)
+                    .foregroundStyle(Color.textPrimary)
 
                 Text(description)
                     .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(Color.gray)
+                    .foregroundStyle(Color.textSecondary)
             }
 
             Spacer()
@@ -466,12 +466,12 @@ struct OnboardingPermissionRow: View {
                 Button(action: action) {
                     Text("Allow")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.bgApp)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.black)
+                                .fill(Color.textPrimary)
                         )
                 }
                 .buttonStyle(.plain)
@@ -481,7 +481,7 @@ struct OnboardingPermissionRow: View {
         .padding(.vertical, 16)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white)
+                .fill(Color.bgCard)
                 .shadow(
                     color: Color.black.opacity(isHovered ? 0.08 : 0.04), radius: isHovered ? 8 : 4,
                     x: 0, y: 2)
@@ -509,11 +509,11 @@ struct ContinueButton: View {
                     .font(.system(size: isEnabled ? 12 : 10, weight: .medium))
                     .offset(x: (isHovered && isEnabled) ? 3 : 0)
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(Color.bgApp)
             .frame(width: 160, height: 44)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isEnabled ? Color.black : Color.gray.opacity(0.3))
+                    .fill(isEnabled ? Color.textPrimary : Color.textSecondary.opacity(0.3))
             )
             .shadow(
                 color: isEnabled ? Color.black.opacity(isHovered ? 0.2 : 0.1) : Color.clear,

@@ -81,6 +81,12 @@ class MiniRecorderWindowController: NSObject {
         p.backgroundColor = .clear
 
         p.contentViewController = hostingController
+
+        // Ensure hosting view has transparent background to prevent visual artifacts
+        if let hostView = hostingController?.view {
+            hostView.wantsLayer = true
+            hostView.layer?.backgroundColor = NSColor.clear.cgColor
+        }
         p.titleVisibility = .hidden
         p.titlebarAppearsTransparent = true
         p.isMovableByWindowBackground = true
