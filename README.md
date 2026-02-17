@@ -19,12 +19,12 @@
 
 ## What is SpeakType?
 
-SpeakType is a **privacy-first, offline voice dictation tool** for macOS. Unlike online dictation services, everything runs **100% locally** using OpenAI's Whisper AI model via [WhisperKit](https://github.com/argmaxinc/WhisperKit).
+SpeakType is a **privacy-first, offline voice dictation tool** for macOS. Unlike online dictation services, everything runs **100% locally** using OpenAI's Whisper AI model via [WhisperKit](https://github.com/argmaxinc/WhisperKit). Support for Parakeet coming soon!
 
 - **Privacy First** - Zero data leaves your Mac
 - **Lightning Fast** - Optimized for Apple Silicon
 - **Works Everywhere** - Any app, any text field
-- **Free & Open Source** - No subscriptions, no limits
+- **Open Source** - Audit every line of code yourself
 
 ---
 
@@ -42,9 +42,8 @@ SpeakType is a **privacy-first, offline voice dictation tool** for macOS. Unlike
 
 1. Download `SpeakType.dmg`
 2. Drag **SpeakType** to **Applications**
-3. Right-click → **Open** (required for unsigned apps)
-4. Grant Microphone + Accessibility permissions
-5. Download an AI model from Settings → AI Models
+3. Grant Microphone + Accessibility + Documents Folder permissions
+4. Download an AI model from Settings → AI Models
 
 Press `fn` to start dictating.
 
@@ -89,6 +88,12 @@ scripts/release.sh 1.0.6
 git push origin HEAD
 git push origin v1.0.6
 ```
+
+### Current Issues
+
+⚠️ When loading a model for the first time / switching to another model, there is a startup delay of 30-60 seconds. 
+
+So the first transcription will appear ultra slow, but it will go back to instantaneous dictation right after it's warmed up. 
 
 ### Project Structure
 
