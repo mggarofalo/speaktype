@@ -10,6 +10,7 @@ struct MiniRecorderView: View {
 
     @State private var isProcessing = false
     @State private var statusMessage = "Transcribing..."
+    @State private var isWarmingUp = false
     @State private var showAccessibilityWarning = false
     var onCommit: ((String) -> Void)?
     var onCancel: (() -> Void)?
@@ -47,7 +48,17 @@ struct MiniRecorderView: View {
         ZStack {
             backgroundView
 
-            if isProcessing {
+            if isWarmingUp {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .colorScheme(.dark)
+                    Text("Preparing model...")
+                        .font(Typography.labelMedium)
+                        .foregroundColor(.white.opacity(0.9))
+                }
+                .transition(.opacity)
+            } else if isProcessing {
                 Text(statusMessage)
                     .font(Typography.labelMedium)
                     .foregroundColor(.white)
@@ -162,7 +173,22 @@ struct MiniRecorderView: View {
     private var modelSelectionMenu: some View {
         ForEach(AIModel.availableModels) { model in
             Button {
+                let previousModel = selectedModel
                 selectedModel = model.variant
+
+                // Pre-load the new model immediately so the first transcription isn't slow
+                if model.variant != previousModel {
+                    Task {
+                        await MainActor.run { isWarmingUp = true }
+                        do {
+                            try await whisperService.loadModel(variant: model.variant)
+                            debugLog("Model pre-loaded after switch: \(model.variant)")
+                        } catch {
+                            debugLog("Model pre-load failed: \(error.localizedDescription)")
+                        }
+                        await MainActor.run { isWarmingUp = false }
+                    }
+                }
             } label: {
                 if selectedModel == model.variant {
                     Label(model.name, systemImage: "checkmark")
@@ -312,7 +338,7 @@ struct MiniRecorderView: View {
             if !whisperService.isInitialized || whisperService.currentModelVariant != selectedModel
             {
                 debugLog("Loading model: \(selectedModel)")
-                await MainActor.run { statusMessage = "Loading AI model (one-time)..." }
+                await MainActor.run { statusMessage = "Warming up model — first use is slower..." }
                 do {
                     try await whisperService.loadModel(variant: selectedModel)
                     debugLog("Model loaded successfully")

@@ -50,6 +50,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // Key was just pressed down - start recording
                 self.isHotkeyPressed = true
                 self.miniRecorderController?.startRecording()
+
+                // If it's the Fn key, suppress the emoji picker
+                if currentHotkey == .fn {
+                    self.suppressEmojiPicker()
+                }
             } else if !isPressed && self.isHotkeyPressed {
                 // Key was just released - stop recording
                 self.isHotkeyPressed = false
@@ -69,11 +74,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if isPressed && !self.isHotkeyPressed {
                 self.isHotkeyPressed = true
                 self.miniRecorderController?.startRecording()
+
+                // If it's the Fn key, suppress the emoji picker
+                if currentHotkey == .fn {
+                    self.suppressEmojiPicker()
+                }
             } else if !isPressed && self.isHotkeyPressed {
                 self.isHotkeyPressed = false
                 self.miniRecorderController?.stopRecording()
             }
             return event
+        }
+    }
+
+    /// Inject a dummy key press to prevent the system "Press Fn to show Emoji" behavior.
+    /// The system will see "Fn + DummyKey" and assume Fn was used as a modifier.
+    private func suppressEmojiPicker() {
+        let dummyKeyCode: CGKeyCode = 0xFF  // Undefined key code (255)
+        let eventSource = CGEventSource(stateID: .hidSystemState)
+
+        // Post key down
+        if let keyDown = CGEvent(
+            keyboardEventSource: eventSource, virtualKey: dummyKeyCode, keyDown: true)
+        {
+            keyDown.post(tap: .cghidEventTap)
+        }
+
+        // Post key up immediately
+        if let keyUp = CGEvent(
+            keyboardEventSource: eventSource, virtualKey: dummyKeyCode, keyDown: false)
+        {
+            keyUp.post(tap: .cghidEventTap)
         }
     }
 
