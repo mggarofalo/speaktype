@@ -1,10 +1,10 @@
-import SwiftUI
-import KeyboardShortcuts
 import AVFoundation
+import KeyboardShortcuts
+import SwiftUI
 
 struct SettingsView: View {
     @State private var selectedTab: SettingsTab = .general
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // Header with tabs
@@ -12,7 +12,7 @@ struct SettingsView: View {
                 Text("Settings")
                     .font(Typography.displayLarge)
                     .foregroundStyle(Color.textPrimary)
-                
+
                 // Tab bar
                 HStack(spacing: 0) {
                     ForEach(SettingsTab.allCases) { tab in
@@ -28,7 +28,7 @@ struct SettingsView: View {
             .padding(.horizontal, 24)
             .padding(.top, 24)
             .padding(.bottom, 16)
-            
+
             // Tab content
             switch selectedTab {
             case .general:
@@ -47,9 +47,9 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     case general = "General"
     case audio = "Audio"
     case permissions = "Permissions"
-    
+
     var id: String { rawValue }
-    
+
     var icon: String {
         switch self {
         case .general: return "gearshape"
@@ -63,7 +63,7 @@ struct SettingsTabButton: View {
     let tab: SettingsTab
     let isSelected: Bool
     let action: () -> Void
-    
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
@@ -88,21 +88,22 @@ struct GeneralSettingsTab: View {
     @AppStorage("appTheme") private var appTheme: AppTheme = .system
     @AppStorage("autoUpdate") private var autoUpdate = true
     @AppStorage("selectedHotkey") private var selectedHotkey: HotkeyOption = .fn
-    
+
     @StateObject private var updateService = UpdateService.shared
     @EnvironmentObject var licenseManager: LicenseManager
-    
-    @State private var showUpdateSheet = false
+
     @State private var showLicenseSheet = false
     @State private var showDeactivateAlert = false
-    
+
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 // Appearance
                 SettingsSection {
-                    SettingsSectionHeader(icon: "paintpalette", title: "Appearance", subtitle: "Choose your preferred theme")
-                    
+                    SettingsSectionHeader(
+                        icon: "paintpalette", title: "Appearance",
+                        subtitle: "Choose your preferred theme")
+
                     HStack(spacing: 20) {
                         ForEach(AppTheme.allCases) { theme in
                             RadioButton(
@@ -113,11 +114,13 @@ struct GeneralSettingsTab: View {
                         }
                     }
                 }
-                
+
                 // Shortcuts
                 SettingsSection {
-                    SettingsSectionHeader(icon: "command", title: "Shortcuts", subtitle: "Configure recording hotkeys")
-                    
+                    SettingsSectionHeader(
+                        icon: "command", title: "Shortcuts", subtitle: "Configure recording hotkeys"
+                    )
+
                     VStack(spacing: 16) {
                         HStack {
                             Text("Primary Hotkey")
@@ -145,30 +148,16 @@ struct GeneralSettingsTab: View {
                             }
                             .menuStyle(.borderlessButton)
                         }
-                        
-                        Divider()
-                            .background(Color.border.opacity(0.5))
-                        
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("Custom Shortcut")
-                                    .font(Typography.bodyMedium)
-                                    .foregroundStyle(Color.textPrimary)
-                                Spacer()
-                                KeyboardShortcuts.Recorder(for: .toggleRecord)
-                            }
-                            
-                            Text("Quick tap to start hands-free recording. Press and hold for push-to-talk.")
-                                .font(Typography.captionSmall)
-                                .foregroundStyle(Color.textMuted)
-                        }
+
                     }
                 }
-                
+
                 // Updates
                 SettingsSection {
-                    SettingsSectionHeader(icon: "arrow.down.circle", title: "Updates", subtitle: "SpeakType \(AppVersion.currentVersion)")
-                    
+                    SettingsSectionHeader(
+                        icon: "arrow.down.circle", title: "Updates",
+                        subtitle: "SpeakType \(AppVersion.currentVersion)")
+
                     VStack(spacing: 16) {
                         HStack {
                             Text("Automatically check for updates")
@@ -178,13 +167,10 @@ struct GeneralSettingsTab: View {
                             Toggle("", isOn: $autoUpdate)
                                 .labelsHidden()
                         }
-                        
+
                         Button(action: {
                             Task {
                                 await updateService.checkForUpdates()
-                                if updateService.availableUpdate != nil {
-                                    showUpdateSheet = true
-                                }
                             }
                         }) {
                             HStack(spacing: 6) {
@@ -196,8 +182,11 @@ struct GeneralSettingsTab: View {
                                     Image(systemName: "arrow.clockwise")
                                         .font(.system(size: 12))
                                 }
-                                Text(updateService.isCheckingForUpdates ? "Checking..." : "Check for Updates")
-                                    .font(Typography.labelMedium)
+                                Text(
+                                    updateService.isCheckingForUpdates
+                                        ? "Checking..." : "Check for Updates"
+                                )
+                                .font(Typography.labelMedium)
                             }
                             .foregroundStyle(Color.textPrimary)
                             .frame(maxWidth: .infinity)
@@ -209,7 +198,7 @@ struct GeneralSettingsTab: View {
                         .disabled(updateService.isCheckingForUpdates)
                     }
                 }
-                
+
                 // License - Hidden (logic kept for future use)
                 // SettingsSection {
                 //     SettingsSectionHeader(
@@ -217,7 +206,7 @@ struct GeneralSettingsTab: View {
                 //         title: "License",
                 //         subtitle: licenseManager.isPro ? "Pro Active" : "Free Plan"
                 //     )
-                //     
+                //
                 //     if licenseManager.isPro {
                 //         Button(action: { showDeactivateAlert = true }) {
                 //             Text("Deactivate License")
@@ -237,17 +226,13 @@ struct GeneralSettingsTab: View {
             }
             .padding(24)
         }
-        .sheet(isPresented: $showUpdateSheet) {
-            if let update = updateService.availableUpdate {
-                UpdateSheet(update: update)
-            }
-        }
+
         .sheet(isPresented: $showLicenseSheet) {
             LicenseView()
                 .environmentObject(licenseManager)
         }
         .alert("Deactivate License", isPresented: $showDeactivateAlert) {
-            Button("Cancel", role: .cancel) { }
+            Button("Cancel", role: .cancel) {}
             Button("Deactivate", role: .destructive) {
                 Task { try? await licenseManager.deactivateLicense() }
             }
@@ -261,13 +246,14 @@ struct GeneralSettingsTab: View {
 
 struct AudioSettingsTab: View {
     @StateObject private var audioRecorder = AudioRecordingService.shared
-    
+
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 SettingsSection {
-                    SettingsSectionHeader(icon: "mic", title: "Input Device", subtitle: "Select your microphone")
-                    
+                    SettingsSectionHeader(
+                        icon: "mic", title: "Input Device", subtitle: "Select your microphone")
+
                     VStack(spacing: 12) {
                         if audioRecorder.availableDevices.isEmpty {
                             Text("No input devices found")
@@ -287,7 +273,7 @@ struct AudioSettingsTab: View {
                             }
                         }
                     }
-                    
+
                     Button(action: { audioRecorder.fetchAvailableDevices() }) {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.clockwise")
@@ -319,13 +305,15 @@ struct PermissionsSettingsTab: View {
     @State private var micStatus: AVAuthorizationStatus = .notDetermined
     @State private var accessibilityStatus: Bool = false
     @State private var timer: Timer?
-    
+
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 SettingsSection {
-                    SettingsSectionHeader(icon: "shield", title: "App Permissions", subtitle: "Required for full functionality")
-                    
+                    SettingsSectionHeader(
+                        icon: "shield", title: "App Permissions",
+                        subtitle: "Required for full functionality")
+
                     VStack(spacing: 10) {
                         SettingsPermissionItem(
                             icon: "mic.fill",
@@ -335,7 +323,7 @@ struct PermissionsSettingsTab: View {
                             isGranted: micStatus == .authorized,
                             action: { openSettings(for: "Privacy_Microphone") }
                         )
-                        
+
                         SettingsPermissionItem(
                             icon: "hand.raised.fill",
                             color: Color.textSecondary,
@@ -360,20 +348,21 @@ struct PermissionsSettingsTab: View {
             timer?.invalidate()
         }
     }
-    
+
     private func startPolling() {
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             checkPermissions()
         }
     }
-    
+
     private func checkPermissions() {
         micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         accessibilityStatus = AXIsProcessTrusted()
     }
-    
+
     private func openSettings(for pane: String) {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")
+        {
             NSWorkspace.shared.open(url)
         }
     }
@@ -385,13 +374,13 @@ struct SettingsSectionHeader: View {
     let icon: String
     let title: String
     let subtitle: String
-    
+
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 14))
                 .foregroundStyle(Color.textMuted)
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(Typography.labelLarge)
@@ -400,7 +389,7 @@ struct SettingsSectionHeader: View {
                     .font(Typography.captionSmall)
                     .foregroundStyle(Color.textMuted)
             }
-            
+
             Spacer()
         }
         .padding(.bottom, 16)
@@ -409,11 +398,11 @@ struct SettingsSectionHeader: View {
 
 struct SettingsSection<Content: View>: View {
     let content: Content
-    
+
     init(@ViewBuilder content: () -> Content) {
         self.content = content()
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             content
@@ -425,7 +414,7 @@ struct SettingsSection<Content: View>: View {
 struct ToggleRow: View {
     let title: String
     @Binding var isOn: Bool
-    
+
     var body: some View {
         HStack {
             Text(title)
@@ -442,22 +431,24 @@ struct RadioButton: View {
     let title: String
     let isSelected: Bool
     let action: () -> Void
-    
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
                 ZStack {
                     Circle()
-                        .strokeBorder(isSelected ? Color.accentPrimary : Color.textMuted, lineWidth: 1.5)
+                        .strokeBorder(
+                            isSelected ? Color.accentPrimary : Color.textMuted, lineWidth: 1.5
+                        )
                         .frame(width: 18, height: 18)
-                    
+
                     if isSelected {
                         Circle()
                             .fill(Color.accentPrimary)
                             .frame(width: 10, height: 10)
                     }
                 }
-                
+
                 Text(title)
                     .font(Typography.bodyMedium)
                     .foregroundStyle(Color.textPrimary)
@@ -474,7 +465,7 @@ struct SettingsPermissionItem: View {
     let desc: String
     let isGranted: Bool
     let action: () -> Void
-    
+
     var body: some View {
         HStack(spacing: 14) {
             Image(systemName: icon)
@@ -483,7 +474,7 @@ struct SettingsPermissionItem: View {
                 .frame(width: 32, height: 32)
                 .background(Color.bgHover)
                 .clipShape(Circle())
-            
+
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(Typography.bodyMedium)
@@ -492,9 +483,9 @@ struct SettingsPermissionItem: View {
                     .font(Typography.captionSmall)
                     .foregroundStyle(Color.textMuted)
             }
-            
+
             Spacer()
-            
+
             if isGranted {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(Color.textSecondary)
@@ -526,6 +517,6 @@ enum AppTheme: String, CaseIterable, Identifiable {
     case light = "Light"
     case dark = "Dark"
     case system = "System"
-    
+
     var id: String { rawValue }
 }
