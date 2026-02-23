@@ -5,33 +5,34 @@
 //  Created by Karan Singh on 7/1/26.
 //
 
-import SwiftUI
-import SwiftData
 import KeyboardShortcuts
+import SwiftData
+import SwiftUI
 
 @main
 struct speaktypeApp: App {
     @Environment(\.openWindow) var openWindow
     @Environment(\.dismissWindow) var dismissWindow
-    
+
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
     @AppStorage("appTheme") private var appTheme: AppTheme = .system
-    
+    @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
+
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    
+
     // License Manager
     @StateObject private var licenseManager = LicenseManager.shared
-    
+
     // Trial Manager
     @StateObject private var trialManager = TrialManager.shared
-    
+
     init() {
         // For UI testing: bypass onboarding automatically
         if ProcessInfo.processInfo.arguments.contains("--uitesting") {
             hasCompletedOnboarding = true
         }
     }
-    
+
     var body: some Scene {
         // Main Dashboard Window (Hidden by default, opened via Menu Bar or Dock)
         WindowGroup(id: "main-dashboard") {
@@ -51,17 +52,17 @@ struct speaktypeApp: App {
         }
         .defaultSize(width: 1200, height: 800)
         .windowStyle(.hiddenTitleBar)
-        .handlesExternalEvents(matching: ["main-dashboard", "open"]) // Only open for matching IDs
+        .handlesExternalEvents(matching: ["main-dashboard", "open"])  // Only open for matching IDs
         .commands {
-             SidebarCommands()
-             CommandGroup(after: .appInfo) {
-                 Button("Manage License...") {
-                     openWindow(id: "license-window")
-                 }
-                 .keyboardShortcut("L", modifiers: [.command, .shift])
-             }
+            SidebarCommands()
+            CommandGroup(after: .appInfo) {
+                Button("Manage License...") {
+                    openWindow(id: "license-window")
+                }
+                .keyboardShortcut("L", modifiers: [.command, .shift])
+            }
         }
-        
+
         // License Window
         Window("License", id: "license-window") {
             ThemeProvider {
@@ -73,12 +74,12 @@ struct speaktypeApp: App {
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
-        
+
         // Note: Mini Recorder is now managed manually by AppDelegate -> MiniRecorderWindowController
         // to prevent SwiftUI from auto-opening the main dashboard on activation.
-        
+
         // Menu Bar Extra (Always running listener)
-        MenuBarExtra("SpeakType", systemImage: "mic.fill") {
+        MenuBarExtra("SpeakType", systemImage: "mic.fill", isInserted: $showMenuBarIcon) {
             Button("Open Dashboard") {
                 // Ensure we open the main dashboard via consistent ID or URL
                 // Using URL forces the specific window group to handle it

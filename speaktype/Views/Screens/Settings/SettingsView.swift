@@ -88,6 +88,8 @@ struct GeneralSettingsTab: View {
     @AppStorage("appTheme") private var appTheme: AppTheme = .system
     @AppStorage("autoUpdate") private var autoUpdate = true
     @AppStorage("selectedHotkey") private var selectedHotkey: HotkeyOption = .fn
+    @AppStorage("recordingMode") private var recordingMode: Int = 0  // 0: Hold to record, 1: Toggle
+    @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
 
     @StateObject private var updateService = UpdateService.shared
     @EnvironmentObject var licenseManager: LicenseManager
@@ -137,10 +139,11 @@ struct GeneralSettingsTab: View {
                                 HStack(spacing: 6) {
                                     Text(selectedHotkey.displayName)
                                         .font(Typography.bodySmall)
+                                        .foregroundStyle(Color.textPrimary)
                                     Image(systemName: "chevron.up.chevron.down")
                                         .font(.system(size: 9))
+                                        .foregroundStyle(Color.textPrimary)
                                 }
-                                .foregroundStyle(Color.textPrimary)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 7)
                                 .background(Color.bgHover)
@@ -149,6 +152,37 @@ struct GeneralSettingsTab: View {
                             .menuStyle(.borderlessButton)
                         }
 
+                        HStack {
+                            Text("Recording Mode")
+                                .font(Typography.bodyMedium)
+                                .foregroundStyle(Color.textPrimary)
+                            Spacer()
+                            Picker("", selection: $recordingMode) {
+                                Text("Hold to record").tag(0)
+                                Text("Toggle").tag(1)
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(width: 180)
+                        }
+
+                    }
+                }
+
+                // General Behavior
+                SettingsSection {
+                    SettingsSectionHeader(
+                        icon: "macwindow", title: "General", subtitle: "App behavior settings"
+                    )
+
+                    VStack(spacing: 16) {
+                        HStack {
+                            Text("Show menu bar icon")
+                                .font(Typography.bodyMedium)
+                                .foregroundStyle(Color.textPrimary)
+                            Spacer()
+                            Toggle("", isOn: $showMenuBarIcon)
+                                .labelsHidden()
+                        }
                     }
                 }
 

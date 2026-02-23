@@ -47,18 +47,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 && event.modifierFlags.contains(currentHotkey.modifierFlag)
 
             if isPressed && !self.isHotkeyPressed {
-                // Key was just pressed down - start recording
+                // Key was just pressed down
                 self.isHotkeyPressed = true
-                self.miniRecorderController?.startRecording()
+
+                let recordingMode = UserDefaults.standard.integer(forKey: "recordingMode")
+                if recordingMode == 1 {
+                    // Toggle mode
+                    if AudioRecordingService.shared.isRecording {
+                        self.miniRecorderController?.stopRecording()
+                    } else {
+                        self.miniRecorderController?.startRecording()
+                    }
+                } else {
+                    // Hold-to-record mode
+                    self.miniRecorderController?.startRecording()
+                }
 
                 // If it's the Fn key, suppress the emoji picker
                 if currentHotkey == .fn {
                     self.suppressEmojiPicker()
                 }
             } else if !isPressed && self.isHotkeyPressed {
-                // Key was just released - stop recording
+                // Key was just released
                 self.isHotkeyPressed = false
-                self.miniRecorderController?.stopRecording()
+
+                let recordingMode = UserDefaults.standard.integer(forKey: "recordingMode")
+                if recordingMode == 0 {
+                    // Hold-to-record mode - stop recording when key is released
+                    self.miniRecorderController?.stopRecording()
+                }
             }
         }
 
@@ -73,7 +90,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             if isPressed && !self.isHotkeyPressed {
                 self.isHotkeyPressed = true
-                self.miniRecorderController?.startRecording()
+
+                let recordingMode = UserDefaults.standard.integer(forKey: "recordingMode")
+                if recordingMode == 1 {
+                    // Toggle mode
+                    if AudioRecordingService.shared.isRecording {
+                        self.miniRecorderController?.stopRecording()
+                    } else {
+                        self.miniRecorderController?.startRecording()
+                    }
+                } else {
+                    // Hold-to-record mode
+                    self.miniRecorderController?.startRecording()
+                }
 
                 // If it's the Fn key, suppress the emoji picker
                 if currentHotkey == .fn {
@@ -81,7 +110,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             } else if !isPressed && self.isHotkeyPressed {
                 self.isHotkeyPressed = false
-                self.miniRecorderController?.stopRecording()
+
+                let recordingMode = UserDefaults.standard.integer(forKey: "recordingMode")
+                if recordingMode == 0 {
+                    // Hold-to-record mode - stop recording when key is released
+                    self.miniRecorderController?.stopRecording()
+                }
             }
             return event
         }
