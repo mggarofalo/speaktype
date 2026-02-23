@@ -7,10 +7,11 @@ struct AIModel: Identifiable, Equatable {
     let details: String
     let rating: String
     let size: String
-    let speed: Double // Score relative to 10
-    let accuracy: Double // Score relative to 10
-    let expectedSizeBytes: Int64 // Minimum expected size in bytes for validation
-    
+    let speed: Double  // Score relative to 10
+    let accuracy: Double  // Score relative to 10
+    let expectedSizeBytes: Int64  // Minimum expected size in bytes for validation
+    let minimumRAMGB: Int  // Minimum device RAM in GB for reliable loading
+
     // Speed/Accuracy based on OpenAI Whisper benchmarks (WER on LibriSpeech test-clean)
     // Speed: relative performance on Apple Silicon (10 = fastest)
     // Accuracy: based on Word Error Rate (10 = ~2% WER, 5 = ~15% WER)
@@ -22,8 +23,9 @@ struct AIModel: Identifiable, Equatable {
             rating: "Excellent",
             size: "1.6 GB",
             speed: 7.0,  // Optimized but still large
-            accuracy: 9.5, // ~4% WER
-            expectedSizeBytes: 1_400_000_000
+            accuracy: 9.5,  // ~4% WER
+            expectedSizeBytes: 1_400_000_000,
+            minimumRAMGB: 8
         ),
         AIModel(
             name: "Whisper Medium",
@@ -32,8 +34,9 @@ struct AIModel: Identifiable, Equatable {
             rating: "Great",
             size: "1.5 GB",
             speed: 5.5,  // Slower due to size
-            accuracy: 8.9, // ~6% WER
-            expectedSizeBytes: 1_300_000_000
+            accuracy: 8.9,  // ~6% WER
+            expectedSizeBytes: 1_300_000_000,
+            minimumRAMGB: 8
         ),
         AIModel(
             name: "Whisper Small",
@@ -42,8 +45,9 @@ struct AIModel: Identifiable, Equatable {
             rating: "Recommended",
             size: "244 MB",
             speed: 8.0,  // Fast for its accuracy
-            accuracy: 8.5, // ~5% WER (English)
-            expectedSizeBytes: 200_000_000
+            accuracy: 8.5,  // ~5% WER (English)
+            expectedSizeBytes: 200_000_000,
+            minimumRAMGB: 4
         ),
         AIModel(
             name: "Whisper Base",
@@ -52,8 +56,9 @@ struct AIModel: Identifiable, Equatable {
             rating: "Good",
             size: "74 MB",
             speed: 9.0,  // Very fast
-            accuracy: 7.5, // ~7% WER (English)
-            expectedSizeBytes: 70_000_000
+            accuracy: 7.5,  // ~7% WER (English)
+            expectedSizeBytes: 70_000_000,
+            minimumRAMGB: 2
         ),
         AIModel(
             name: "Whisper Tiny",
@@ -62,13 +67,28 @@ struct AIModel: Identifiable, Equatable {
             rating: "Basic",
             size: "39 MB",
             speed: 9.5,  // Fastest
-            accuracy: 6.0, // ~12% WER
-            expectedSizeBytes: 30_000_000
-        )
+            accuracy: 6.0,  // ~12% WER
+            expectedSizeBytes: 30_000_000,
+            minimumRAMGB: 2
+        ),
     ]
-    
+
     /// Returns the expected minimum size for a given model variant
     static func expectedSize(for variant: String) -> Int64 {
-        return availableModels.first(where: { $0.variant == variant })?.expectedSizeBytes ?? 50_000_000
+        return availableModels.first(where: { $0.variant == variant })?.expectedSizeBytes
+            ?? 50_000_000
+    }
+
+    /// Returns the best model recommended for this device's RAM
+    static func recommendedModel(forDeviceRAMGB ram: Int) -> AIModel {
+        // Find the best (highest accuracy) model that fits in the device's RAM
+        return availableModels.first(where: { ram >= $0.minimumRAMGB })
+            ?? availableModels.last!  // Fallback to smallest
+    }
+
+    /// Returns a warning string if this model may not work well on the device, nil otherwise
+    func ramWarning(deviceRAMGB: Int) -> String? {
+        guard deviceRAMGB < minimumRAMGB else { return nil }
+        return "Requires \(minimumRAMGB)GB+ RAM — your Mac has \(deviceRAMGB)GB"
     }
 }

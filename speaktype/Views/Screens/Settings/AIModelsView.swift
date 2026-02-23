@@ -3,33 +3,33 @@ import SwiftUI
 /// Screen for managing AI transcription models
 struct AIModelsView: View {
     // MARK: - Properties
-    
+
     @StateObject private var downloadService = ModelDownloadService.shared
     @AppStorage("selectedModelVariant") private var selectedModel: String = ""
     @State private var models = AIModel.availableModels
-    
+
     // MARK: - Computed Properties
-    
+
     var selectedModelName: String {
         models.first(where: { $0.variant == selectedModel })?.name ?? "No model downloaded yet"
     }
-    
+
     private var hasAnyModelDownloaded: Bool {
         downloadService.downloadProgress.values.contains { $0 >= 1.0 }
     }
-    
+
     // MARK: - Body
-    
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 headerSection
-                
+
                 // Show setup banner if no model downloaded
                 if !hasAnyModelDownloaded {
                     setupBanner
                 }
-                
+
                 currentModelCard
                 modelsListSection
             }
@@ -42,48 +42,59 @@ struct AIModelsView: View {
             // Refresh model download status when view appears
             Task {
                 await downloadService.refreshDownloadedModels()
-                
+
                 // Auto-fallback: If selected model isn't downloaded, switch to first available
                 if !selectedModel.isEmpty {
-                    let isSelectedModelDownloaded = downloadService.downloadProgress[selectedModel] ?? 0.0 >= 1.0
-                    
+                    let isSelectedModelDownloaded =
+                        downloadService.downloadProgress[selectedModel] ?? 0.0 >= 1.0
+
                     if !isSelectedModelDownloaded {
                         // Find first downloaded model
-                        if let firstDownloaded = downloadService.downloadProgress.first(where: { $0.value >= 1.0 })?.key {
-                            print("⚠️ Selected model '\(selectedModel)' not found. Auto-switching to '\(firstDownloaded)'")
+                        if let firstDownloaded = downloadService.downloadProgress.first(where: {
+                            $0.value >= 1.0
+                        })?.key {
+                            print(
+                                "⚠️ Selected model '\(selectedModel)' not found. Auto-switching to '\(firstDownloaded)'"
+                            )
                             selectedModel = firstDownloaded
                         } else {
                             print("⚠️ No models downloaded. Please download a model to use the app.")
-                            selectedModel = "" // Clear invalid selection
+                            selectedModel = ""  // Clear invalid selection
                         }
                     }
                 }
             }
         }
     }
-    
+
     // MARK: - Subviews
-    
+
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("AI Models")
                 .font(Typography.displayLarge)
                 .foregroundStyle(Color.textPrimary)
-            
+
             HStack(spacing: 6) {
-                Text("Manage your local transcription models powered by WhisperKit.")
-                    .font(Typography.bodySmall)
-                    .foregroundStyle(Color.textSecondary)
-                
+                let recommended = AIModel.recommendedModel(
+                    forDeviceRAMGB: WhisperService.deviceRAMGB)
+                Text(
+                    "Recommended for your Mac (\(WhisperService.deviceRAMGB)GB RAM): **\(recommended.name)**"
+                )
+                .font(Typography.bodySmall)
+                .foregroundStyle(Color.textSecondary)
+
                 // Info icon with tooltip on hover
                 Image(systemName: "info.circle")
                     .font(.system(size: 12))
                     .foregroundStyle(Color.textMuted)
-                    .help("First transcription after selecting a model may take 10-30 seconds while the AI loads.")
+                    .help(
+                        "First transcription after selecting a model may take 10-30 seconds while the AI loads."
+                    )
             }
         }
     }
-    
+
     private var currentModelCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Default Model")
@@ -91,7 +102,7 @@ struct AIModelsView: View {
                 .foregroundStyle(Color.textSecondary)
                 .textCase(.uppercase)
                 .tracking(0.5)
-            
+
             Text(selectedModelName)
                 .font(Typography.headlineMedium)
                 .foregroundStyle(Color.textPrimary)
@@ -106,13 +117,13 @@ struct AIModelsView: View {
         )
         .cardShadow()
     }
-    
+
     private var modelsListSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Available Models")
                 .font(Typography.headlineLarge)
                 .foregroundStyle(Color.textPrimary)
-            
+
             VStack(spacing: 12) {
                 ForEach($models) { $model in
                     ModelRow(model: $model, selectedModel: $selectedModel)
@@ -120,23 +131,25 @@ struct AIModelsView: View {
             }
         }
     }
-    
+
     private var setupBanner: some View {
         HStack(spacing: 16) {
             Image(systemName: "arrow.down.circle.fill")
                 .font(.system(size: 32))
                 .foregroundStyle(Color.textPrimary)
-            
+
             VStack(alignment: .leading, spacing: 4) {
                 Text("Download a Model to Get Started")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
-                
-                Text("Choose a model below to enable voice transcription. We recommend Whisper Base for most users.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Color.textSecondary)
+
+                Text(
+                    "Choose a model below to enable voice transcription. We recommend **\(AIModel.recommendedModel(forDeviceRAMGB: WhisperService.deviceRAMGB).name)** for your Mac."
+                )
+                .font(.system(size: 13))
+                .foregroundStyle(Color.textSecondary)
             }
-            
+
             Spacer()
         }
         .padding(20)

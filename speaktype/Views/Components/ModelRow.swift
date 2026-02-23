@@ -12,6 +12,9 @@ struct ModelRow: View {
     // State for model loading
     @State private var isLoadingModel = false
     @State private var loadError: String?
+    @State private var loadingStartTime: Date?
+    @State private var loadingElapsed: TimeInterval = 0
+    @State private var loadingTimer: Timer?
 
     // MARK: - Computed Properties
 
@@ -77,6 +80,29 @@ struct ModelRow: View {
                     Text(model.details)
                         .font(Typography.cardDescription)
                         .foregroundStyle(Color.textSecondary)
+
+                    // RAM warning for undersized devices
+                    if let warning = model.ramWarning(deviceRAMGB: WhisperService.deviceRAMGB) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10))
+                            Text(warning)
+                                .font(.system(size: 11))
+                        }
+                        .foregroundStyle(Color.orange)
+                    }
+
+                    // Load error display
+                    if let loadError = loadError {
+                        HStack(spacing: 4) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 10))
+                            Text(loadError)
+                                .font(.system(size: 11))
+                                .lineLimit(2)
+                        }
+                        .foregroundStyle(Color.red)
+                    }
                 }
 
                 Spacer()
@@ -180,19 +206,33 @@ struct ModelRow: View {
                 }
             } else {
                 if isLoadingModel {
-                    // Show loading state while model is being loaded
-                    HStack(spacing: 6) {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                            .frame(width: 12, height: 12)
-                        Text("Loading model...")
+                    // Show loading state with descriptive stage text
+                    VStack(alignment: .trailing, spacing: 4) {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                                .frame(width: 12, height: 12)
+                            Text(
+                                whisperService.loadingStage.isEmpty
+                                    ? "Loading..." : whisperService.loadingStage
+                            )
                             .font(Typography.buttonLabelSmall)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Color(white: 0.95))
+                        .foregroundStyle(Color.black.opacity(0.7))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                        if loadingElapsed > 15 {
+                            Text(
+                                loadingElapsed > 30
+                                    ? "Taking longer than expected…" : "\(Int(loadingElapsed))s"
+                            )
+                            .font(.system(size: 10))
+                            .foregroundStyle(loadingElapsed > 30 ? Color.orange : Color.textMuted)
+                        }
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(Color(white: 0.95))
-                    .foregroundStyle(Color.black.opacity(0.7))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .help("First load may take 10-30 seconds")
                 } else {
                     // Downloaded but not selected - show "Use" button
@@ -271,6 +311,15 @@ struct ModelRow: View {
     private func loadAndSelectModel() {
         isLoadingModel = true
         loadError = nil
+        loadingStartTime = Date()
+        loadingElapsed = 0
+
+        // Start a timer to track elapsed time
+        loadingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            if let start = loadingStartTime {
+                loadingElapsed = Date().timeIntervalSince(start)
+            }
+        }
 
         Task {
             do {
@@ -282,6 +331,7 @@ struct ModelRow: View {
                 print("✅ Model loaded successfully: \(model.variant)")
 
                 await MainActor.run {
+                    stopLoadingTimer()
                     isLoadingModel = false
                     selectedModel = model.variant
                 }
@@ -289,11 +339,19 @@ struct ModelRow: View {
                 print("❌ Failed to load model \(model.variant): \(error.localizedDescription)")
 
                 await MainActor.run {
+                    stopLoadingTimer()
                     isLoadingModel = false
                     loadError = error.localizedDescription
                 }
             }
         }
+    }
+
+    private func stopLoadingTimer() {
+        loadingTimer?.invalidate()
+        loadingTimer = nil
+        loadingStartTime = nil
+        loadingElapsed = 0
     }
 }
 
