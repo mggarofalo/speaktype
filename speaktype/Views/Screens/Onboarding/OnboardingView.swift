@@ -18,6 +18,11 @@ struct OnboardingView: View {
                             withAnimation(.easeInOut(duration: 0.5)) { currentPage = 1 }
                         })
                         .transition(.opacity)
+                    } else if currentPage == 1 {
+                        GlobeKeyOptimizationPage(action: {
+                            withAnimation(.easeInOut(duration: 0.5)) { currentPage = 2 }
+                        })
+                        .transition(.opacity)
                     } else {
                         PermissionsPage(finishAction: {
                             completeOnboarding()
@@ -533,6 +538,71 @@ struct ContinueButton: View {
                 .onChanged { _ in if isEnabled { isPressed = true } }
                 .onEnded { _ in isPressed = false }
         )
+    }
+}
+
+struct GlobeKeyOptimizationPage: View {
+    let action: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            VStack(spacing: 16) {
+                Text("OPTIMIZE WORKFLOW")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                    .textCase(.uppercase)
+                    .tracking(2)
+
+                Text("The Globe Key")
+                    .font(.system(size: 40, weight: .regular, design: .serif))
+                    .foregroundStyle(Color.textPrimary)
+
+                Text(
+                    "By default, macOS uses the \u{1F310} key to show the Emoji Picker, which interrupts SpeakType.\n\nPlease open Keyboard Settings and change **\"Press \u{1F310} key to\"** to **\"Do Nothing\"**."
+                )
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(Color.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+                .lineSpacing(4)
+            }
+
+            VStack(spacing: 12) {
+                Button(action: openKeyboardSettings) {
+                    HStack {
+                        Image(systemName: "switch.2")
+                        Text("Open Keyboard Settings")
+                    }
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color.bgApp)
+                    .frame(width: 260, height: 44)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.textPrimary)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 40)
+
+            Spacer()
+
+            ContinueButton(
+                isEnabled: true,
+                action: action
+            )
+            .padding(.bottom, 48)
+        }
+        .padding(.horizontal, 60)
+        .padding(.vertical, 40)
+    }
+
+    private func openKeyboardSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.keyboard") {
+            NSWorkspace.shared.open(url)
+        }
     }
 }
 

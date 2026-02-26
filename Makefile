@@ -47,8 +47,14 @@ setup:
 	@which swiftlint > /dev/null || echo "⚠️  SwiftLint not installed. Install with: brew install swiftlint"
 	@echo "✅ Setup complete!"
 
+# Stamp BuildInfo.swift with the current compile timestamp
+stamp-build-info:
+	@TIMESTAMP=$$(date '+%b %d %H:%M:%S'); \
+	echo "// Auto-generated — do not edit manually." > speaktype/Constants/BuildInfo.swift; \
+	echo "let buildTimestamp = \"$$TIMESTAMP\"" >> speaktype/Constants/BuildInfo.swift
+
 # Build the project
-build:
+build: stamp-build-info
 	@echo "Building SpeakType..."
 	xcodebuild -scheme speaktype -configuration Debug build
 
@@ -63,7 +69,7 @@ run-release:
 	@open $$(find ~/Library/Developer/Xcode/DerivedData/speaktype-*/Build/Products/Release -name "speaktype.app" -type d | head -1)
 
 # Run the application
-run:
+run: stamp-build-info
 	@echo "Running SpeakType..."
 	@xcodebuild -scheme speaktype -configuration Debug build 2>&1 | grep -E "(error:|BUILD)" || true
 	@open $$(find ~/Library/Developer/Xcode/DerivedData/speaktype-*/Build/Products/Debug -name "speaktype.app" -type d | head -1)

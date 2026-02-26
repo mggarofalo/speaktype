@@ -4,33 +4,49 @@ import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var miniRecorderController: MiniRecorderWindowController?
-    private var isHotkeyPressed = false
+    var isHotkeyPressed = false
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Initialize the controller
         miniRecorderController = MiniRecorderWindowController()
 
         // Setup dynamic hotkey monitoring based on user selection
         setupHotkeyMonitoring()
 
-        // Check for updates on app launch
         checkForUpdatesOnLaunch()
 
-        // Listen for update window requests
         UpdateService.shared.showUpdateWindowPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.showUpdateWindow()
             }
             .store(in: &cancellables)
-
     }
 
-    // Critical: Prevent the app from quitting when the Mini Recorder panel closes.
-    // Since we are a Menu Bar app (mostly), we must stay alive.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
+    }
+
+    // MARK: - Emoji Picker Suppression
+
+    private func suppressEmojiPicker() {
+        // A robust way to suppress the emoji picker is to post a harmless keydown/keyup
+        // with the F19 key (a non-modifier key), which immediately breaks the Globe key's double-tap
+        // or press-and-release listener without causing a spurious flagsChanged event.
+        let dummyKeyCode: CGKeyCode = 0x50  // F19 (80)
+        let eventSource = CGEventSource(stateID: .hidSystemState)
+
+        if let keyDown = CGEvent(
+            keyboardEventSource: eventSource, virtualKey: dummyKeyCode, keyDown: true)
+        {
+            keyDown.post(tap: .cghidEventTap)
+        }
+
+        if let keyUp = CGEvent(
+            keyboardEventSource: eventSource, virtualKey: dummyKeyCode, keyDown: false)
+        {
+            keyUp.post(tap: .cghidEventTap)
+        }
     }
 
     // MARK: - Hotkey Monitoring
@@ -41,7 +57,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self = self else { return }
             let currentHotkey = self.getSelectedHotkey()
 
-            // Check if the hotkey is currently pressed
             let isPressed =
                 event.keyCode == currentHotkey.keyCode
                 && event.modifierFlags.contains(currentHotkey.modifierFlag)
@@ -49,6 +64,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if isPressed && !self.isHotkeyPressed {
                 // Key was just pressed down
                 self.isHotkeyPressed = true
+
+                // Always suppress the emoji picker on press if using Fn
+                if currentHotkey == .fn {
+                    self.suppressEmojiPicker()
+                }
 
                 let recordingMode = UserDefaults.standard.integer(forKey: "recordingMode")
                 if recordingMode == 1 {
@@ -62,14 +82,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     // Hold-to-record mode
                     self.miniRecorderController?.startRecording()
                 }
-
-                // If it's the Fn key, suppress the emoji picker
-                if currentHotkey == .fn {
-                    self.suppressEmojiPicker()
-                }
             } else if !isPressed && self.isHotkeyPressed {
                 // Key was just released
                 self.isHotkeyPressed = false
+
+                // Always suppress on release as well, to break the hold sequence.
+                if currentHotkey == .fn {
+                    self.suppressEmojiPicker()
+                }
 
                 let recordingMode = UserDefaults.standard.integer(forKey: "recordingMode")
                 if recordingMode == 0 {
@@ -79,7 +99,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Add local monitor for hotkey events
+        // Add local monitor for hotkey events (same logic)
         NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             guard let self = self else { return event }
             let currentHotkey = self.getSelectedHotkey()
@@ -91,54 +111,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if isPressed && !self.isHotkeyPressed {
                 self.isHotkeyPressed = true
 
+                if currentHotkey == .fn {
+                    self.suppressEmojiPicker()
+                }
+
                 let recordingMode = UserDefaults.standard.integer(forKey: "recordingMode")
                 if recordingMode == 1 {
-                    // Toggle mode
                     if AudioRecordingService.shared.isRecording {
                         self.miniRecorderController?.stopRecording()
                     } else {
                         self.miniRecorderController?.startRecording()
                     }
                 } else {
-                    // Hold-to-record mode
                     self.miniRecorderController?.startRecording()
-                }
-
-                // If it's the Fn key, suppress the emoji picker
-                if currentHotkey == .fn {
-                    self.suppressEmojiPicker()
                 }
             } else if !isPressed && self.isHotkeyPressed {
                 self.isHotkeyPressed = false
 
+                if currentHotkey == .fn {
+                    self.suppressEmojiPicker()
+                }
+
                 let recordingMode = UserDefaults.standard.integer(forKey: "recordingMode")
                 if recordingMode == 0 {
-                    // Hold-to-record mode - stop recording when key is released
                     self.miniRecorderController?.stopRecording()
                 }
             }
             return event
-        }
-    }
-
-    /// Inject a dummy key press to prevent the system "Press Fn to show Emoji" behavior.
-    /// The system will see "Fn + DummyKey" and assume Fn was used as a modifier.
-    private func suppressEmojiPicker() {
-        let dummyKeyCode: CGKeyCode = 0xFF  // Undefined key code (255)
-        let eventSource = CGEventSource(stateID: .hidSystemState)
-
-        // Post key down
-        if let keyDown = CGEvent(
-            keyboardEventSource: eventSource, virtualKey: dummyKeyCode, keyDown: true)
-        {
-            keyDown.post(tap: .cghidEventTap)
-        }
-
-        // Post key up immediately
-        if let keyUp = CGEvent(
-            keyboardEventSource: eventSource, virtualKey: dummyKeyCode, keyDown: false)
-        {
-            keyUp.post(tap: .cghidEventTap)
         }
     }
 
@@ -147,21 +146,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if UserDefaults.standard.object(forKey: "useFnKey") != nil {
             let useFnKey = UserDefaults.standard.bool(forKey: "useFnKey")
             if useFnKey {
-                // Migrate to new system
                 UserDefaults.standard.set(HotkeyOption.fn.rawValue, forKey: "selectedHotkey")
                 UserDefaults.standard.removeObject(forKey: "useFnKey")
                 return .fn
             }
         }
 
-        // Load selected hotkey
         if let rawValue = UserDefaults.standard.string(forKey: "selectedHotkey"),
             let option = HotkeyOption(rawValue: rawValue)
         {
             return option
         }
 
-        // Default to Fn
         return .fn
     }
 
@@ -170,19 +166,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func checkForUpdatesOnLaunch() {
         let updateService = UpdateService.shared
         let autoUpdate = UserDefaults.standard.bool(forKey: "autoUpdate")
-
-        // Only check if auto-update is enabled and enough time has passed
         guard autoUpdate && updateService.shouldCheckForUpdates() else { return }
 
         Task {
             await updateService.checkForUpdates(silent: true)
-
-            // If update is available and we should show reminder
             if updateService.availableUpdate != nil && updateService.shouldShowReminder() {
-                // Show update window on main thread
-                await MainActor.run {
-                    self.showUpdateWindow()
-                }
+                await MainActor.run { self.showUpdateWindow() }
             }
         }
     }

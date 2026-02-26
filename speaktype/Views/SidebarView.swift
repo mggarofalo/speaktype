@@ -2,18 +2,18 @@ import SwiftUI
 
 struct SidebarView: View {
     @Binding var selection: SidebarItem?
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // Space for traffic lights
             Spacer()
                 .frame(height: SidebarConstants.topInset)
-            
+
             // Logo Header
             SidebarHeader()
                 .padding(.horizontal, SidebarConstants.horizontalPadding)
                 .padding(.bottom, SidebarConstants.headerBottomPadding)
-            
+
             // Navigation Items
             VStack(spacing: SidebarConstants.itemSpacing) {
                 ForEach(SidebarItem.allCases) { item in
@@ -25,15 +25,21 @@ struct SidebarView: View {
                 }
             }
             .padding(.horizontal, SidebarConstants.itemHorizontalPadding)
-            
+
             Spacer()
-            
-            // Upgrade Card - Hidden (logic kept for future use)
-            // SidebarPromoCard()
-            //     .padding(.horizontal, SidebarConstants.itemHorizontalPadding)
-            //     .padding(.bottom, SidebarConstants.bottomPadding)
+
+            // Build version indicator (faint, for testing)
+            Text(buildVersionString)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(Color.textMuted.opacity(0.35))
+                .padding(.bottom, 14)
         }
         .frame(width: SidebarConstants.width)
+    }
+
+    private var buildVersionString: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        return "v\(version) (\(buildTimestamp))"
     }
 }
 
@@ -61,11 +67,11 @@ private struct SidebarHeader: View {
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 48, height: 48)
-            
+
             Text("SpeakType")
                 .font(Typography.sidebarLogo)
                 .foregroundStyle(Color.textPrimary)
-            
+
             Spacer()
         }
     }
@@ -76,7 +82,7 @@ struct SidebarButton: View {
     let isSelected: Bool
     let action: () -> Void
     @State private var isHovered = false
-    
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
@@ -84,11 +90,11 @@ struct SidebarButton: View {
                     .font(.system(size: SidebarConstants.iconSize))
                     .foregroundStyle(isSelected ? Color.textPrimary : Color.textMuted)
                     .frame(width: 20)
-                
+
                 Text(item.rawValue)
                     .font(isSelected ? Typography.sidebarItemActive : Typography.sidebarItem)
                     .foregroundStyle(isSelected ? Color.textPrimary : Color.textSecondary)
-                
+
                 Spacer()
             }
             .padding(.horizontal, 12)
@@ -118,11 +124,11 @@ private struct SidebarPromoCard: View {
                 Text("✨")
                     .font(.system(size: 12))
             }
-            
+
             Text("Upgrade for unlimited words")
                 .font(Typography.sidebarPromoSubtitle)
                 .foregroundStyle(Color.textMuted)
-            
+
             Button(action: {}) {
                 Text("Upgrade to Pro")
                     .font(Typography.sidebarPromoButton)
@@ -153,9 +159,9 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case statistics = "Statistics"
     case aiModels = "AI Models"
     case settings = "Settings"
-    
+
     var id: String { rawValue }
-    
+
     var icon: String {
         switch self {
         case .dashboard: return "square.grid.2x2"

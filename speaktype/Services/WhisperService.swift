@@ -81,9 +81,17 @@ class WhisperService {
         }
 
         do {
+            let documentDirectory = FileManager.default.urls(
+                for: .documentDirectory, in: .userDomainMask
+            ).first!
+            let modelFolderPath = documentDirectory.appendingPathComponent(
+                "huggingface/models/argmaxinc/whisperkit-coreml/\(variant)"
+            ).path
+
             // Use WhisperKitConfig with optimized settings
             let config = WhisperKitConfig(
                 model: variant,
+                modelFolder: modelFolderPath,
                 computeOptions: ModelComputeOptions(),  // Uses GPU + Neural Engine
                 verbose: false,
                 logLevel: .error,

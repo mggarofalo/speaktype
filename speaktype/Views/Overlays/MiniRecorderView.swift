@@ -16,10 +16,16 @@ struct MiniRecorderView: View {
     var onCancel: (() -> Void)?
 
     @AppStorage("selectedModelVariant") private var selectedModel: String = ""
+    @AppStorage("recordingMode") private var recordingMode: Int = 0
 
     private var isAccessibilityEnabled: Bool {
         AXIsProcessTrusted()
     }
+
+    // MARK: - State for Escape key cancellation
+    @State private var cancelCommit = false
+    @State private var globalEscapeMonitor: Any?
+    @State private var localEscapeMonitor: Any?
 
     // MARK: - State for Animation
     @State private var phase: CGFloat = 0
@@ -78,6 +84,13 @@ struct MiniRecorderView: View {
                         }
                     }
                     .frame(height: 30)
+
+                    // Recording mode indicator
+                    Image(systemName: recordingMode == 0 ? "hand.tap.fill" : "repeat.1")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.7))
+                        .padding(.leading, 4)
+                        .help(recordingMode == 0 ? "Hold to Record" : "Toggle to Record")
                 }
                 .padding(.horizontal, 12)
                 .transition(.opacity)
@@ -97,6 +110,28 @@ struct MiniRecorderView: View {
         }
         .onAppear {
             initializedService()
+
+            // Set up Escape key monitors
+            globalEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+                if event.keyCode == 53 {
+                    Task { @MainActor in self.handleEscape() }
+                }
+            }
+            localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                if event.keyCode == 53 {
+                    Task { @MainActor in self.handleEscape() }
+                    return nil  // swallow Escape
+                }
+                return event
+            }
+        }
+        .onDisappear {
+            if let globalEscapeMonitor = globalEscapeMonitor {
+                NSEvent.removeMonitor(globalEscapeMonitor)
+            }
+            if let localEscapeMonitor = localEscapeMonitor {
+                NSEvent.removeMonitor(localEscapeMonitor)
+            }
         }
         .onChange(of: isListening) {
             // Only animate when actually recording to save CPU
@@ -115,9 +150,7 @@ struct MiniRecorderView: View {
         }
         .background(
             KeyEventHandlerView(onEscape: {
-                if isListening {
-                    stopAndTranscribe()
-                }
+                handleEscape()
             })
         )
         .alert("Accessibility Permission Required", isPresented: $showAccessibilityWarning) {
@@ -272,6 +305,7 @@ struct MiniRecorderView: View {
             return
         }
 
+        cancelCommit = false
         debugLog("Starting recording...")
         audioRecorder.startRecording()
         isListening = true
@@ -318,6 +352,40 @@ struct MiniRecorderView: View {
         }
     }
 
+    private func handleEscape() {
+        guard isListening || isProcessing || isWarmingUp || whisperService.isLoading else { return }
+
+        debugLog("Escape pressed - cancelling immediate commit")
+        cancelCommit = true
+
+        if isListening {
+            Task {
+                let url = await audioRecorder.stopRecording()
+
+                await MainActor.run {
+                    isListening = false
+                    isProcessing = true
+                    statusMessage = "Stopping transcription..."
+                }
+
+                if let url = url {
+                    // Let it process in the background and save to history, but don't commit to UI
+                    await processRecording(url: url)
+                } else {
+                    await MainActor.run {
+                        onCancel?()
+                    }
+                }
+            }
+        } else {
+            // Already processing, just show stopping and quickly dismiss
+            statusMessage = "Stopping transcription..."
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                onCancel?()
+            }
+        }
+    }
+
     private func debugLog(_ message: String) {
         let logPath = "/tmp/speaktype_debug.log"
         let logEntry = "[\(Date())] \(message)\n"
@@ -359,7 +427,11 @@ struct MiniRecorderView: View {
             }
 
             debugLog("Starting transcription...")
-            await MainActor.run { statusMessage = "Transcribing..." }
+            // If user has already cancelled (pressed Escape), skip transcription UI updates
+            // but still run the transcription in the background to save to history
+            if !cancelCommit {
+                await MainActor.run { statusMessage = "Transcribing..." }
+            }
             let text = try await whisperService.transcribe(audioFile: url)
             debugLog("Transcription result: \(text.prefix(50))...")
 
@@ -389,8 +461,16 @@ struct MiniRecorderView: View {
 
             debugLog("Calling onCommit...")
             await MainActor.run {
-                onCommit?(text)
+                if !cancelCommit {
+                    onCommit?(text)
+                }
                 isProcessing = false
+
+                // If we cancelled by dismissing early, the window might already be closed,
+                // but if we waited for it (e.g. short transcription), close it now.
+                if cancelCommit {
+                    onCancel?()
+                }
             }
             debugLog("onCommit called successfully")
         } catch {
