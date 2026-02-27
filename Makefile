@@ -23,11 +23,11 @@ help:
 	@echo "  make test-ui       - Run UI tests only"
 	@echo ""
 	@echo "Distribution:"
-	@echo "  make release       - 🚀 Build ZIP + DMG for distribution"
-	@echo "  make run-release   - Run Release build"
-	@echo "  make package       - Create ZIP package"
-	@echo "  make dmg           - Create DMG installer"
-	@echo "  ./scripts/create-release.sh - Interactive release creator"
+	@echo "  make create-release - 🔨 Bump version, build, sign, notarize → dist/*.dmg"
+	@echo "  make deploy-release - 🚀 Push tag + upload DMG to GitHub releases"
+	@echo "  make run-release    - Run the last Release build locally"
+	@echo "  make package        - Create ZIP package (unsigned)"
+	@echo "  make dmg            - Create DMG installer (unsigned)"
 	@echo ""
 	@echo "Code Quality:"
 	@echo "  make lint          - Run SwiftLint"
@@ -40,6 +40,14 @@ help:
 	@echo "  make logs-export   - Export last 24h logs to Desktop"
 	@echo ""
 	@echo "📚 For detailed release instructions, see: RELEASING.md"
+
+# Create the local release (build + sign + notarize → dist/)
+create-release:
+	@./scripts/create-release.sh $(VERSION)
+
+# Deploy the release to GitHub (push tag + upload DMG)
+deploy-release:
+	@./scripts/deploy-release.sh $(VERSION)
 
 # Project setup
 setup:
