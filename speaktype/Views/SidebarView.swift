@@ -28,11 +28,34 @@ struct SidebarView: View {
 
             Spacer()
 
-            // Build version indicator (faint, for testing)
-            Text(buildVersionString)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(Color.textMuted.opacity(0.35))
-                .padding(.bottom, 14)
+            // 2048 Labs branding link
+            Button(action: {
+                NSWorkspace.shared.open(URL(string: "https://2048labs.com")!)
+            }) {
+                Text("2048 LABS")
+                    .font(.system(size: 16, weight: .medium, design: .monospaced))
+                    .tracking(3)
+                    .foregroundStyle(Color.textMuted.opacity(0.25))
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.pointingHand.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .padding(.bottom, 6)
+
+            // Build version indicator — debug only, never shown in production
+            #if DEBUG
+                Text(buildVersionString)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Color.textMuted.opacity(0.35))
+                    .padding(.bottom, 14)
+            #else
+                Spacer().frame(height: 14)
+            #endif
         }
         .frame(width: SidebarConstants.width)
     }
