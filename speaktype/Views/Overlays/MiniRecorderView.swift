@@ -16,7 +16,7 @@ struct MiniRecorderView: View {
     var onCancel: (() -> Void)?
 
     // MARK: - Chunking state
-    @State private var chunkTexts: [String] = []  // Transcribed texts from background chunks
+    @State private var chunkTranscripts: [ChunkTranscript] = []
     @State private var chunkCancellables = Set<AnyCancellable>()
     @State private var chunkTasks: [Task<Void, Never>] = []  // In-flight chunk transcription tasks
     @State private var pendingChunkCount = 0  // How many chunk tasks are still running
@@ -43,8 +43,17 @@ struct MiniRecorderView: View {
     }
 
     private var currentLanguageLabel: String {
-        if transcriptionLanguage == "auto" { return "auto" }
+        if transcriptionLanguage == "auto" { return "AUTO" }
         return transcriptionLanguage.uppercased()
+    }
+
+    private var spokenLanguageHelpText: String {
+        if transcriptionLanguage == "auto" {
+            return "Spoken language: Auto-detect. SpeakType will try to detect the language you are speaking."
+        }
+
+        return
+            "Spoken language: \(spokenLanguageDisplayName(for: transcriptionLanguage)). This guides transcription only and does not translate the output."
     }
 
     private var isAccessibilityEnabled: Bool {
@@ -138,6 +147,7 @@ struct MiniRecorderView: View {
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
+                    .help(spokenLanguageHelpText)
 
                     // Recording mode indicator
                     Image(systemName: recordingMode == 0 ? "hand.tap.fill" : "repeat.1")
@@ -362,7 +372,7 @@ struct MiniRecorderView: View {
         cancelCommit = false
 
         // Reset chunk state for this recording session
-        chunkTexts.removeAll()
+        chunkTranscripts.removeAll()
         chunkCancellables.removeAll()
         chunkTasks.removeAll()
         pendingChunkCount = 0
@@ -375,10 +385,13 @@ struct MiniRecorderView: View {
                 pendingChunkCount += 1
                 let task = Task {
                     do {
-                        let text = try await whisperService.transcribeChunk(audioFile: chunkURL)
+                        let text = try await whisperService.transcribeChunk(
+                            audioFile: chunkURL,
+                            language: transcriptionLanguage
+                        )
                         await MainActor.run {
                             if !text.isEmpty {
-                                chunkTexts.append(text)
+                                upsertChunkTranscript(text: text, for: chunkURL)
                                 debugLog("🔪 Chunk appended: \(text.prefix(30))")
                             }
                             pendingChunkCount -= 1
@@ -399,9 +412,6 @@ struct MiniRecorderView: View {
 
     private func stopAndTranscribe() {
         debugLog("stopAndTranscribe called")
-
-        // Unsubscribe from chunk publisher (final chunk is still emitted by stopRecording)
-        chunkCancellables.removeAll()
 
         // Check if model is selected
         guard !selectedModel.isEmpty else {
@@ -448,7 +458,10 @@ struct MiniRecorderView: View {
                 }
             }
 
-            let preTranscribedText = await MainActor.run { chunkTexts.joined(separator: " ") }
+            let preTranscribedText = await MainActor.run { orderedChunkTranscriptText() }
+            await MainActor.run {
+                chunkCancellables.removeAll()
+            }
 
             if preTranscribedText.isEmpty {
                 // No chunks were transcribed yet - fall back to full-file transcription
@@ -456,7 +469,7 @@ struct MiniRecorderView: View {
                 await processRecording(url: url)
             } else {
                 // Chunks covered the audio - use pre-transcribed text directly
-                debugLog("✅ Using \(chunkTexts.count) pre-transcribed chunks")
+                debugLog("✅ Using \(chunkTranscripts.count) pre-transcribed chunks")
                 let duration = await getAudioDuration(url: url)
                 let modelName =
                     AIModel.availableModels.first(where: { $0.variant == selectedModel })?.name
@@ -623,6 +636,45 @@ struct MiniRecorderView: View {
             return 0
         }
     }
+
+    private func upsertChunkTranscript(text: String, for url: URL) {
+        let chunk = ChunkTranscript(
+            id: url.lastPathComponent,
+            sortKey: chunkSortKey(for: url),
+            text: text
+        )
+
+        if let existingIndex = chunkTranscripts.firstIndex(where: { $0.id == chunk.id }) {
+            chunkTranscripts[existingIndex] = chunk
+        } else {
+            chunkTranscripts.append(chunk)
+        }
+    }
+
+    private func orderedChunkTranscriptText() -> String {
+        chunkTranscripts
+            .sorted { $0.sortKey < $1.sortKey }
+            .map(\.text)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func chunkSortKey(for url: URL) -> Double {
+        let fileName = url.deletingPathExtension().lastPathComponent
+        let rawValue = fileName.replacingOccurrences(of: "chunk-", with: "")
+        return Double(rawValue) ?? .greatestFiniteMagnitude
+    }
+
+    private func spokenLanguageDisplayName(for code: String) -> String {
+        if code == "auto" { return "Auto-detect" }
+        return GeneralSettingsTab.whisperLanguages.first(where: { $0.code == code })?.name ?? code
+    }
+}
+
+private struct ChunkTranscript: Equatable {
+    let id: String
+    let sortKey: Double
+    let text: String
 }
 
 // MARK: - Helper Shapes & Views

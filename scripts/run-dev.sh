@@ -38,10 +38,15 @@ ditto "$BUILD_APP_PATH" "$DEST_APP_PATH"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${BUNDLE_ID}" "$DEST_APP_PATH/Contents/Info.plist" >/dev/null
 /usr/bin/codesign --force --deep --sign - "$DEST_APP_PATH" >/dev/null
 
-killall "$APP_NAME" 2>/dev/null || true
+DEV_PROCESS_PATH="$DEST_APP_PATH/Contents/MacOS/speaktype"
+if pgrep -f "$DEV_PROCESS_PATH" >/dev/null 2>&1; then
+  echo "Stopping existing ${APP_NAME} instance..."
+  pkill -f "$DEV_PROCESS_PATH" || true
+  sleep 1
+fi
 
 echo "Launching ${APP_NAME}..."
-open -na "$DEST_APP_PATH"
+open -a "$DEST_APP_PATH"
 
 echo ""
 echo "Bundle ID: $BUNDLE_ID"

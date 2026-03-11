@@ -139,10 +139,7 @@ class WhisperService {
         print("Starting transcription for: \(audioFile.lastPathComponent)")
 
         do {
-            var options = DecodingOptions()
-            options.task = .transcribe
-            options.language = (language == "auto") ? nil : language
-
+            let options = decodingOptions(for: language)
             let results = try await pipe.transcribe(audioPath: audioFile.path, decodeOptions: options)
             let text = results.map { $0.text }.joined(separator: " ").trimmingCharacters(
                 in: .whitespacesAndNewlines)
@@ -157,7 +154,7 @@ class WhisperService {
 
     /// Transcribe a background audio chunk without affecting the global `isTranscribing` flag.
     /// Chunk files are automatically deleted after transcription.
-    func transcribeChunk(audioFile: URL) async throws -> String {
+    func transcribeChunk(audioFile: URL, language: String = "auto") async throws -> String {
         guard let pipe = pipe, isInitialized else {
             throw TranscriptionError.notInitialized
         }
@@ -169,7 +166,10 @@ class WhisperService {
 
         print("🔪 Chunk transcription started: \(audioFile.lastPathComponent)")
 
-        let results = try await pipe.transcribe(audioPath: audioFile.path)
+        let results = try await pipe.transcribe(
+            audioPath: audioFile.path,
+            decodeOptions: decodingOptions(for: language)
+        )
         let text = results.map { $0.text }.joined(separator: " ").trimmingCharacters(
             in: .whitespacesAndNewlines)
 
@@ -177,5 +177,12 @@ class WhisperService {
         // Clean up temp chunk file after transcription
         try? FileManager.default.removeItem(at: audioFile)
         return text
+    }
+
+    private func decodingOptions(for language: String) -> DecodingOptions {
+        var options = DecodingOptions()
+        options.task = .transcribe
+        options.language = (language == "auto") ? nil : language
+        return options
     }
 }

@@ -244,6 +244,8 @@ class AudioRecordingService: NSObject, ObservableObject {
                 Thread.sleep(forTimeInterval: 0.1)
 
                 // --- Finalize the last in-flight chunk ---
+                let finishGroup = DispatchGroup()
+
                 if let lastChunkInput = self.chunkAssetWriterInput,
                     let lastChunkWriter = self.chunkAssetWriter,
                     let lastChunkURL = self.chunkFileURL,
@@ -251,10 +253,12 @@ class AudioRecordingService: NSObject, ObservableObject {
                 {
                     self.resetChunkWriterState()
 
+                    finishGroup.enter()
                     lastChunkInput.markAsFinished()
-                    lastChunkWriter.finishWriting { [weak self] in
+                    lastChunkWriter.finishWriting {
                         print("🔪 Final chunk saved: \(lastChunkURL.lastPathComponent)")
-                        self?.chunkPublisher.send(lastChunkURL)
+                        self.chunkPublisher.send(lastChunkURL)
+                        finishGroup.leave()
                     }
                 }
 
@@ -263,10 +267,17 @@ class AudioRecordingService: NSObject, ObservableObject {
                 let writerInput = self.assetWriterInput
                 self.resetMainWriterState()
 
-                writerInput?.markAsFinished()
-                writer?.finishWriting {
-                    self.isStopping = false  // Reset flag after writing is complete
-                    print("Recording finished saving to \(url.path)")
+                if let writer {
+                    finishGroup.enter()
+                    writerInput?.markAsFinished()
+                    writer.finishWriting {
+                        print("Recording finished saving to \(url.path)")
+                        finishGroup.leave()
+                    }
+                }
+
+                finishGroup.notify(queue: self.audioQueue) {
+                    self.isStopping = false
                     continuation.resume(returning: url)
                 }
             }

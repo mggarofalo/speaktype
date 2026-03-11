@@ -210,19 +210,19 @@ struct GeneralSettingsTab: View {
                     }
                 }
 
-                // Transcription Language
+                // Spoken Language
                 SettingsSection {
                     SettingsSectionHeader(
-                        icon: "globe", title: "Transcription Language",
-                        subtitle: "Language spoken during dictation")
+                        icon: "globe", title: "Spoken Language",
+                        subtitle: "Language you are speaking during dictation")
 
                     HStack {
-                        Text("Language")
+                        Text("Dictation language")
                             .font(Typography.bodyMedium)
                             .foregroundStyle(Color.textPrimary)
                         Spacer()
                         Menu {
-                            Button("Auto-detect") { transcriptionLanguage = "auto" }
+                            Button("Auto-detect spoken language") { transcriptionLanguage = "auto" }
                             if !recentLanguageCodes.isEmpty {
                                 Divider()
                                 ForEach(recentLanguageCodes, id: \.self) { code in
@@ -258,7 +258,12 @@ struct GeneralSettingsTab: View {
                         .menuStyle(.borderlessButton)
                     }
 
-                    Text("Only multilingual models support non-English languages. English-only models (.en) will ignore this setting.")
+                    Text("This setting tells SpeakType which language you are speaking. It improves transcription accuracy, but it does not translate the result into another language.")
+                        .font(Typography.captionSmall)
+                        .foregroundStyle(Color.textMuted)
+                        .padding(.top, 4)
+
+                    Text("Use a multilingual model for non-English dictation. English-only models (.en) can only output English.")
                         .font(Typography.captionSmall)
                         .foregroundStyle(Color.textMuted)
                         .padding(.top, 4)
