@@ -17,6 +17,38 @@ struct MiniRecorderView: View {
 
     @AppStorage("selectedModelVariant") private var selectedModel: String = ""
     @AppStorage("recordingMode") private var recordingMode: Int = 0
+    @AppStorage("transcriptionLanguage") private var transcriptionLanguage: String = "auto"
+    @AppStorage("recentTranscriptionLanguages") private var recentLanguagesString: String = ""
+
+    private var recentLanguageCodes: [String] {
+        recentLanguagesString.split(separator: ",").map(String.init).filter { !$0.isEmpty }
+    }
+
+    private func updateRecentLanguages(code: String) {
+        guard code != "auto" else { return }
+        var recents = recentLanguageCodes.filter { $0 != code }
+        recents.insert(code, at: 0)
+        recentLanguagesString = recents.prefix(5).joined(separator: ",")
+    }
+
+    private func setLanguage(_ code: String) {
+        transcriptionLanguage = code
+        updateRecentLanguages(code: code)
+    }
+
+    private var currentLanguageLabel: String {
+        if transcriptionLanguage == "auto" { return "AUTO" }
+        return transcriptionLanguage.uppercased()
+    }
+
+    private var spokenLanguageHelpText: String {
+        if transcriptionLanguage == "auto" {
+            return "Spoken language hint: Auto-detect. SpeakType will try to detect the language you are speaking."
+        }
+
+        return
+            "Spoken language hint: \(spokenLanguageDisplayName(for: transcriptionLanguage)). If this does not match the language you actually speak, the result may be inaccurate or come back in the wrong language."
+    }
 
     private var isAccessibilityEnabled: Bool {
         AXIsProcessTrusted()
@@ -75,7 +107,7 @@ struct MiniRecorderView: View {
 
                     // Waveform - bar visualizer style
                     HStack(spacing: 3) {
-                        ForEach(0..<20) { index in
+                        ForEach(0..<15) { index in
                             RoundedRectangle(cornerRadius: 2)
                                 .fill(Color.white.opacity(0.7))
                                 .frame(width: 3, height: barHeight(for: index))
@@ -84,6 +116,32 @@ struct MiniRecorderView: View {
                         }
                     }
                     .frame(height: 30)
+
+                    // Language quick picker
+                    Menu {
+                        Button("Auto") { setLanguage("auto") }
+                        if !recentLanguageCodes.isEmpty {
+                            Divider()
+                            ForEach(recentLanguageCodes, id: \.self) { code in
+                                if let lang = GeneralSettingsTab.whisperLanguages.first(where: { $0.code == code }) {
+                                    Button(lang.name) { setLanguage(code) }
+                                }
+                            }
+                            Divider()
+                            Button("Clear recents") { recentLanguagesString = "" }
+                        }
+                    } label: {
+                        Text(currentLanguageLabel)
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.75))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 3)
+                            .background(Color.white.opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help(spokenLanguageHelpText)
 
                     // Recording mode indicator
                     Image(systemName: recordingMode == 0 ? "hand.tap.fill" : "repeat.1")
@@ -96,7 +154,7 @@ struct MiniRecorderView: View {
                 .transition(.opacity)
             }
         }
-        .frame(width: 220, height: 50)
+        .frame(width: 260, height: 50)
         .clipShape(RoundedRectangle(cornerRadius: 25))
         .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 2)
         .contextMenu {
@@ -271,6 +329,11 @@ struct MiniRecorderView: View {
             return
         }
 
+        guard !isListening else {
+            debugLog("Already listening, ignoring duplicate start request")
+            return
+        }
+
         // Check if accessibility is enabled - warn but don't block
         if !isAccessibilityEnabled {
             showAccessibilityWarning = true
@@ -306,6 +369,7 @@ struct MiniRecorderView: View {
         }
 
         cancelCommit = false
+
         debugLog("Starting recording...")
         audioRecorder.startRecording()
         isListening = true
@@ -313,6 +377,11 @@ struct MiniRecorderView: View {
 
     private func stopAndTranscribe() {
         debugLog("stopAndTranscribe called")
+
+        guard isListening || audioRecorder.isRecording else {
+            debugLog("Not listening, ignoring duplicate stop request")
+            return
+        }
 
         // Check if model is selected
         guard !selectedModel.isEmpty else {
@@ -348,6 +417,8 @@ struct MiniRecorderView: View {
                 statusMessage = "Transcribing..."
             }
 
+            // Always use the final full-recording transcription for committed output.
+            // Chunk stitching caused repeated phrases at boundaries across languages.
             await processRecording(url: url)
         }
     }
@@ -432,7 +503,7 @@ struct MiniRecorderView: View {
             if !cancelCommit {
                 await MainActor.run { statusMessage = "Transcribing..." }
             }
-            let text = try await whisperService.transcribe(audioFile: url)
+            let text = try await whisperService.transcribe(audioFile: url, language: transcriptionLanguage)
             debugLog("Transcription result: \(text.prefix(50))...")
 
             guard !text.isEmpty else {
@@ -493,6 +564,11 @@ struct MiniRecorderView: View {
         } catch {
             return 0
         }
+    }
+
+    private func spokenLanguageDisplayName(for code: String) -> String {
+        if code == "auto" { return "Auto-detect" }
+        return GeneralSettingsTab.whisperLanguages.first(where: { $0.code == code })?.name ?? code
     }
 }
 

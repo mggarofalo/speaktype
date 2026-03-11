@@ -6,6 +6,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var miniRecorderController: MiniRecorderWindowController?
     var isHotkeyPressed = false
     private var cancellables = Set<AnyCancellable>()
+    private var lastHandledHotkeyTimestamp: TimeInterval = 0
+    private var lastHandledHotkeyPressedState = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         miniRecorderController = MiniRecorderWindowController()
@@ -54,91 +56,58 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupHotkeyMonitoring() {
         // Add global monitor for hotkey events
         NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-            guard let self = self else { return }
-            let currentHotkey = self.getSelectedHotkey()
-
-            let isPressed =
-                event.keyCode == currentHotkey.keyCode
-                && event.modifierFlags.contains(currentHotkey.modifierFlag)
-
-            if isPressed && !self.isHotkeyPressed {
-                // Key was just pressed down
-                self.isHotkeyPressed = true
-
-                // Always suppress the emoji picker on press if using Fn
-                if currentHotkey == .fn {
-                    self.suppressEmojiPicker()
-                }
-
-                let recordingMode = UserDefaults.standard.integer(forKey: "recordingMode")
-                if recordingMode == 1 {
-                    // Toggle mode
-                    if AudioRecordingService.shared.isRecording {
-                        self.miniRecorderController?.stopRecording()
-                    } else {
-                        self.miniRecorderController?.startRecording()
-                    }
-                } else {
-                    // Hold-to-record mode
-                    self.miniRecorderController?.startRecording()
-                }
-            } else if !isPressed && self.isHotkeyPressed {
-                // Key was just released
-                self.isHotkeyPressed = false
-
-                // Always suppress on release as well, to break the hold sequence.
-                if currentHotkey == .fn {
-                    self.suppressEmojiPicker()
-                }
-
-                let recordingMode = UserDefaults.standard.integer(forKey: "recordingMode")
-                if recordingMode == 0 {
-                    // Hold-to-record mode - stop recording when key is released
-                    self.miniRecorderController?.stopRecording()
-                }
-            }
+            self?.handleHotkeyEvent(event)
         }
 
         // Add local monitor for hotkey events (same logic)
         NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-            guard let self = self else { return event }
-            let currentHotkey = self.getSelectedHotkey()
-
-            let isPressed =
-                event.keyCode == currentHotkey.keyCode
-                && event.modifierFlags.contains(currentHotkey.modifierFlag)
-
-            if isPressed && !self.isHotkeyPressed {
-                self.isHotkeyPressed = true
-
-                if currentHotkey == .fn {
-                    self.suppressEmojiPicker()
-                }
-
-                let recordingMode = UserDefaults.standard.integer(forKey: "recordingMode")
-                if recordingMode == 1 {
-                    if AudioRecordingService.shared.isRecording {
-                        self.miniRecorderController?.stopRecording()
-                    } else {
-                        self.miniRecorderController?.startRecording()
-                    }
-                } else {
-                    self.miniRecorderController?.startRecording()
-                }
-            } else if !isPressed && self.isHotkeyPressed {
-                self.isHotkeyPressed = false
-
-                if currentHotkey == .fn {
-                    self.suppressEmojiPicker()
-                }
-
-                let recordingMode = UserDefaults.standard.integer(forKey: "recordingMode")
-                if recordingMode == 0 {
-                    self.miniRecorderController?.stopRecording()
-                }
-            }
+            self?.handleHotkeyEvent(event)
             return event
         }
+    }
+
+    private func handleHotkeyEvent(_ event: NSEvent) {
+        let currentHotkey = getSelectedHotkey()
+        guard event.keyCode == currentHotkey.keyCode else { return }
+
+        let isPressed = event.modifierFlags.contains(currentHotkey.modifierFlag)
+        guard !isDuplicateHotkeyEvent(event, isPressed: isPressed) else { return }
+
+        if isPressed && !isHotkeyPressed {
+            isHotkeyPressed = true
+
+            if currentHotkey == .fn {
+                suppressEmojiPicker()
+            }
+
+            let recordingMode = UserDefaults.standard.integer(forKey: "recordingMode")
+            if recordingMode == 1 {
+                if AudioRecordingService.shared.isRecording {
+                    miniRecorderController?.stopRecording()
+                } else {
+                    miniRecorderController?.startRecording()
+                }
+            } else {
+                miniRecorderController?.startRecording()
+            }
+        } else if !isPressed && isHotkeyPressed {
+            isHotkeyPressed = false
+
+            let recordingMode = UserDefaults.standard.integer(forKey: "recordingMode")
+            if recordingMode == 0 {
+                miniRecorderController?.stopRecording()
+            }
+        }
+    }
+
+    private func isDuplicateHotkeyEvent(_ event: NSEvent, isPressed: Bool) -> Bool {
+        let isDuplicate =
+            abs(event.timestamp - lastHandledHotkeyTimestamp) < 0.05
+            && lastHandledHotkeyPressedState == isPressed
+
+        lastHandledHotkeyTimestamp = event.timestamp
+        lastHandledHotkeyPressedState = isPressed
+        return isDuplicate
     }
 
     private func getSelectedHotkey() -> HotkeyOption {

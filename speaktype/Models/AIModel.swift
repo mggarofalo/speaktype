@@ -12,6 +12,14 @@ struct AIModel: Identifiable, Equatable {
     let expectedSizeBytes: Int64  // Minimum expected size in bytes for validation
     let minimumRAMGB: Int  // Minimum device RAM in GB for reliable loading
 
+    var languageSupportLabel: String {
+        isEnglishOnly ? "English-only" : "Multilingual"
+    }
+
+    var isEnglishOnly: Bool {
+        variant.hasSuffix(".en")
+    }
+
     // Speed/Accuracy based on OpenAI Whisper benchmarks (WER on LibriSpeech test-clean)
     // Speed: relative performance on Apple Silicon (10 = fastest)
     // Accuracy: based on Word Error Rate (10 = ~2% WER, 5 = ~15% WER)

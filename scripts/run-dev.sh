@@ -1,0 +1,53 @@
+#!/bin/bash
+
+set -euo pipefail
+
+APP_NAME="SpeakType-Dev"
+BUNDLE_ID="com.2048labs.speaktype.dev"
+DERIVED_DATA_PATH="$PWD/build/dev-derived"
+BUILD_APP_PATH="$DERIVED_DATA_PATH/Build/Products/Debug/speaktype.app"
+DEST_APP_PATH="$HOME/Applications/${APP_NAME}.app"
+
+if [ ! -f "speaktype.xcodeproj/project.pbxproj" ]; then
+  echo "Error: run this script from the project root."
+  exit 1
+fi
+
+mkdir -p "$HOME/Applications"
+
+echo "Building ${APP_NAME} from current checkout..."
+xcodebuild \
+  -project speaktype.xcodeproj \
+  -scheme speaktype \
+  -configuration Debug \
+  -derivedDataPath "$DERIVED_DATA_PATH" \
+  PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+  build
+
+if [ ! -d "$BUILD_APP_PATH" ]; then
+  echo "Error: built app not found at $BUILD_APP_PATH"
+  exit 1
+fi
+
+echo "Installing ${APP_NAME} to $DEST_APP_PATH..."
+rm -rf "$DEST_APP_PATH"
+ditto "$BUILD_APP_PATH" "$DEST_APP_PATH"
+
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${APP_NAME}" "$DEST_APP_PATH/Contents/Info.plist" >/dev/null
+/usr/libexec/PlistBuddy -c "Set :CFBundleName ${APP_NAME}" "$DEST_APP_PATH/Contents/Info.plist" >/dev/null
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${BUNDLE_ID}" "$DEST_APP_PATH/Contents/Info.plist" >/dev/null
+/usr/bin/codesign --force --deep --sign - "$DEST_APP_PATH" >/dev/null
+
+DEV_PROCESS_PATH="$DEST_APP_PATH/Contents/MacOS/speaktype"
+if pgrep -f "$DEV_PROCESS_PATH" >/dev/null 2>&1; then
+  echo "Stopping existing ${APP_NAME} instance..."
+  pkill -f "$DEV_PROCESS_PATH" || true
+  sleep 1
+fi
+
+echo "Launching ${APP_NAME}..."
+open -a "$DEST_APP_PATH"
+
+echo ""
+echo "Bundle ID: $BUNDLE_ID"
+echo "App Path : $DEST_APP_PATH"
