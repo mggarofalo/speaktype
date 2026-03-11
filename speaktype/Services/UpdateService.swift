@@ -13,6 +13,7 @@ class UpdateService: ObservableObject {
     // Install progress state
     @Published var isInstalling = false
     @Published var installProgress: Double = 0  // 0.0 – 1.0
+    @Published var installPhase: String = ""
     @Published var installStatus: String = ""  // human-readable status
     @Published var installError: String?
 
@@ -138,7 +139,8 @@ class UpdateService: ObservableObject {
             await MainActor.run {
                 self.isInstalling = true
                 self.installProgress = 0
-                self.installStatus = "Downloading update…"
+                self.installPhase = "Downloading"
+                self.installStatus = "Preparing download…"
                 self.installError = nil
             }
 
@@ -146,28 +148,49 @@ class UpdateService: ObservableObject {
                 // 1. Download DMG with progress
                 let dmgURL = try await downloadWithProgress(from: downloadURL)
 
-                // 2. Mount the DMG
-                await MainActor.run { self.installStatus = "Mounting update…" }
+                // 2. Verify the DMG before mounting it
+                await MainActor.run {
+                    self.installPhase = "Verifying"
+                    self.installStatus = "Checking downloaded update…"
+                    self.setInstallProgress(0.84)
+                }
+                try verifyDMG(at: dmgURL)
+
+                // 3. Mount the DMG
+                await MainActor.run {
+                    self.installPhase = "Mounting"
+                    self.installStatus = "Opening downloaded update…"
+                    self.setInstallProgress(0.9)
+                }
                 let mountPoint = try mountDMG(at: dmgURL)
 
-                // 3. Find the .app inside the mounted volume
-                await MainActor.run { self.installStatus = "Installing…" }
+                // 4. Find the .app inside the mounted volume
+                await MainActor.run {
+                    self.installPhase = "Installing"
+                    self.installStatus = "Copying new app into place…"
+                    self.setInstallProgress(0.95)
+                }
                 let appInDMG = try findApp(in: mountPoint)
 
-                // 4. Replace the running app
+                // 5. Replace the running app
                 try replaceCurrentApp(with: appInDMG)
 
-                // 5. Detach the volume (best-effort)
+                // 6. Detach the volume (best-effort)
                 detachDMG(mountPoint: mountPoint)
 
-                // 6. Relaunch
-                await MainActor.run { self.installStatus = "Relaunching…" }
+                // 7. Relaunch
+                await MainActor.run {
+                    self.installPhase = "Relaunching"
+                    self.installStatus = "Finishing update…"
+                    self.setInstallProgress(1)
+                }
                 relaunch()
 
             } catch {
                 await MainActor.run {
                     self.isInstalling = false
                     self.installError = error.localizedDescription
+                    self.installPhase = ""
                     self.installStatus = ""
                 }
             }
@@ -189,22 +212,27 @@ class UpdateService: ObservableObject {
 
         var received: Int64 = 0
         var buffer = Data()
-        buffer.reserveCapacity(1024 * 256)
+        buffer.reserveCapacity(1024 * 64)
+        let startedAt = Date()
 
         for try await byte in asyncBytes {
             buffer.append(byte)
             received += 1
 
-            // Flush every 256 KB
-            if buffer.count >= 1024 * 256 {
+            // Flush every 64 KB so the UI moves more smoothly.
+            if buffer.count >= 1024 * 64 {
                 handle.write(buffer)
                 buffer.removeAll(keepingCapacity: true)
 
                 if total > 0 {
                     let progress = Double(received) / Double(total)
+                    let safeElapsed = max(Date().timeIntervalSince(startedAt), 0.1)
+                    let bytesPerSecond = Double(received) / safeElapsed
                     await MainActor.run {
-                        self.installProgress = progress * 0.8  // download = 0-80%
-                        self.installStatus = "Downloading… \(Int(progress * 100))%"
+                        self.installPhase = "Downloading"
+                        self.setInstallProgress(progress * 0.8)  // download = 0-80%
+                        self.installStatus =
+                            "\(Self.byteString(received)) of \(Self.byteString(total)) • \(Self.byteString(Int64(bytesPerSecond)))/s • \(Int(progress * 100))%"
                     }
                 }
             }
@@ -214,11 +242,26 @@ class UpdateService: ObservableObject {
         if !buffer.isEmpty { handle.write(buffer) }
 
         await MainActor.run {
-            self.installProgress = 0.85
-            self.installStatus = "Download complete."
+            self.installPhase = "Verifying"
+            self.setInstallProgress(0.82)
+            self.installStatus = "Download complete. Preparing update…"
         }
 
         return dest
+    }
+
+    private func verifyDMG(at dmgURL: URL) throws {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        proc.arguments = ["verify", dmgURL.path]
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = Pipe()
+        try proc.run()
+        proc.waitUntilExit()
+
+        guard proc.terminationStatus == 0 else {
+            throw UpdateError.verificationFailed
+        }
     }
 
     private func mountDMG(at dmgURL: URL) throws -> URL {
@@ -308,8 +351,22 @@ class UpdateService: ObservableObject {
         DispatchQueue.main.async {
             self.installError = message
             self.isInstalling = false
+            self.installPhase = ""
             self.installStatus = ""
         }
+    }
+
+    @MainActor
+    private func setInstallProgress(_ target: Double) {
+        let clamped = min(max(target, installProgress), 1)
+        installProgress = installProgress + (clamped - installProgress) * 0.45
+        if clamped - installProgress < 0.01 {
+            installProgress = clamped
+        }
+    }
+
+    private static func byteString(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 }
 
@@ -319,12 +376,14 @@ enum UpdateError: LocalizedError {
     case mountFailed
     case appNotFoundInDMG
     case copyFailed(String)
+    case verificationFailed
 
     var errorDescription: String? {
         switch self {
         case .mountFailed: return "Failed to mount the update disk image."
         case .appNotFoundInDMG: return "Could not find the app inside the downloaded update."
         case .copyFailed(let msg): return "Failed to install: \(msg)"
+        case .verificationFailed: return "The downloaded update failed verification."
         }
     }
 }

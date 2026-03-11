@@ -25,7 +25,7 @@ struct UpdateSheet: View {
                         .foregroundStyle(.primary)
 
                     Text(
-                        "\(appName) \(update.version) is now available—you have \(AppVersion.currentVersion). Would you like to down…"
+                        "\(appName) \(update.version) is now available. You currently have \(AppVersion.currentVersion)."
                     )
                     .font(Typography.bodyMedium)
                     .foregroundStyle(.secondary)
@@ -61,7 +61,17 @@ struct UpdateSheet: View {
 
             // Progress area (shown only while installing)
             if updateService.isInstalling {
-                VStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text(updateService.installPhase)
+                            .font(Typography.labelMedium)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text("\(Int(updateService.installProgress * 100))%")
+                            .font(Typography.bodySmall)
+                            .foregroundStyle(.secondary)
+                    }
+
                     ProgressView(value: updateService.installProgress)
                         .progressViewStyle(.linear)
                         .frame(maxWidth: .infinity)
@@ -69,6 +79,7 @@ struct UpdateSheet: View {
                     Text(updateService.installStatus)
                         .font(Typography.bodySmall)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 20)
@@ -109,7 +120,7 @@ struct UpdateSheet: View {
             HStack(spacing: 12) {
                 if updateService.isInstalling {
                     // Show only a disabled cancel-style placeholder while work is in progress
-                    Text("Installing update, please wait…")
+                    Text("Update in progress…")
                         .font(Typography.bodySmall)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
