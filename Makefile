@@ -1,6 +1,6 @@
 # Makefile for SpeakType
 
-.PHONY: help build clean clean-dev test lint format run run-release setup logs logs-live logs-errors logs-export install uninstall reinstall
+.PHONY: help build clean clean-dev test lint format run run-dev run-release setup logs logs-live logs-errors logs-export install uninstall reinstall
 
 # Default target
 help:
@@ -10,6 +10,7 @@ help:
 	@echo "  make setup         - Initial project setup"
 	@echo "  make build         - Build the project (Debug)"
 	@echo "  make run           - Run the application"
+	@echo "  make run-dev       - Build and run SpeakType-Dev.app"
 	@echo "  make clean         - Clean build artifacts"
 	@echo "  make clean-dev     - 🧹 Clean ALL app data & permissions (fresh start)"
 	@echo "  make xcode         - Open in Xcode"
@@ -81,6 +82,10 @@ run: stamp-build-info
 	@echo "Running SpeakType..."
 	@xcodebuild -scheme speaktype -configuration Debug build 2>&1 | grep -E "(error:|BUILD)" || true
 	@open $$(find ~/Library/Developer/Xcode/DerivedData/speaktype-*/Build/Products/Debug -name "speaktype.app" -type d | head -1)
+
+# Run the current checkout as a separate dev app identity
+run-dev: stamp-build-info
+	@./scripts/run-dev.sh
 
 # Run all tests
 test:

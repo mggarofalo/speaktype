@@ -15,6 +15,12 @@ struct MiniRecorderView: View {
     var onCommit: ((String) -> Void)?
     var onCancel: (() -> Void)?
 
+    // MARK: - Chunking state
+    @State private var chunkTexts: [String] = []  // Transcribed texts from background chunks
+    @State private var chunkCancellables = Set<AnyCancellable>()
+    @State private var chunkTasks: [Task<Void, Never>] = []  // In-flight chunk transcription tasks
+    @State private var pendingChunkCount = 0  // How many chunk tasks are still running
+
     @AppStorage("selectedModelVariant") private var selectedModel: String = ""
     @AppStorage("recordingMode") private var recordingMode: Int = 0
     @AppStorage("transcriptionLanguage") private var transcriptionLanguage: String = "auto"
@@ -354,6 +360,38 @@ struct MiniRecorderView: View {
         }
 
         cancelCommit = false
+
+        // Reset chunk state for this recording session
+        chunkTexts.removeAll()
+        chunkCancellables.removeAll()
+        chunkTasks.removeAll()
+        pendingChunkCount = 0
+
+        // Subscribe to background chunk URLs
+        audioRecorder.chunkPublisher
+            .sink { [self] chunkURL in
+                // Ensure model is loaded before kicking off chunk transcription
+                guard whisperService.isInitialized else { return }
+                pendingChunkCount += 1
+                let task = Task {
+                    do {
+                        let text = try await whisperService.transcribeChunk(audioFile: chunkURL)
+                        await MainActor.run {
+                            if !text.isEmpty {
+                                chunkTexts.append(text)
+                                debugLog("🔪 Chunk appended: \(text.prefix(30))")
+                            }
+                            pendingChunkCount -= 1
+                        }
+                    } catch {
+                        await MainActor.run { pendingChunkCount -= 1 }
+                        debugLog("🔪 Chunk transcription error: \(error.localizedDescription)")
+                    }
+                }
+                chunkTasks.append(task)
+            }
+            .store(in: &chunkCancellables)
+
         debugLog("Starting recording...")
         audioRecorder.startRecording()
         isListening = true
@@ -361,6 +399,9 @@ struct MiniRecorderView: View {
 
     private func stopAndTranscribe() {
         debugLog("stopAndTranscribe called")
+
+        // Unsubscribe from chunk publisher (final chunk is still emitted by stopRecording)
+        chunkCancellables.removeAll()
 
         // Check if model is selected
         guard !selectedModel.isEmpty else {
@@ -396,7 +437,47 @@ struct MiniRecorderView: View {
                 statusMessage = "Transcribing..."
             }
 
-            await processRecording(url: url)
+            // Wait for any still-running chunk transcription tasks
+            if await MainActor.run(body: { pendingChunkCount > 0 }) {
+                debugLog("⏳ Waiting for \(pendingChunkCount) in-flight chunk(s)...")
+                // Poll briefly until all tasks drain (max ~3s)
+                for _ in 0..<30 {
+                    let pending = await MainActor.run { pendingChunkCount }
+                    if pending == 0 { break }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+            }
+
+            let preTranscribedText = await MainActor.run { chunkTexts.joined(separator: " ") }
+
+            if preTranscribedText.isEmpty {
+                // No chunks were transcribed yet - fall back to full-file transcription
+                debugLog("No chunk results yet, falling back to full-file transcription")
+                await processRecording(url: url)
+            } else {
+                // Chunks covered the audio - use pre-transcribed text directly
+                debugLog("✅ Using \(chunkTexts.count) pre-transcribed chunks")
+                let duration = await getAudioDuration(url: url)
+                let modelName =
+                    AIModel.availableModels.first(where: { $0.variant == selectedModel })?.name
+                    ?? selectedModel
+                HistoryService.shared.addItem(
+                    transcript: preTranscribedText,
+                    duration: duration,
+                    audioFileURL: url,
+                    modelUsed: modelName,
+                    transcriptionTime: nil
+                )
+
+                await MainActor.run {
+                    if !cancelCommit {
+                        onCommit?(preTranscribedText)
+                    } else {
+                        onCancel?()
+                    }
+                    isProcessing = false
+                }
+            }
         }
     }
 
