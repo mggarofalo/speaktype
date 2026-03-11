@@ -47,10 +47,8 @@ class MiniRecorderWindowController: NSObject {
         // 1. Hide recorder immediately - REMOVED so it shows "Transcribing..."
         // panel?.orderOut(nil)
 
-        // 2. Return focus to previous app
-        lastActiveApp?.activate()
-
-        // 3. Trigger transcription
+        // Keep focus unchanged while the hotkey is still being released.
+        // Re-activation happens later during commit, right before auto-paste.
         NotificationCenter.default.post(name: .recordingStopRequested, object: nil)
     }
 
