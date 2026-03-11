@@ -43,11 +43,11 @@ struct MiniRecorderView: View {
 
     private var spokenLanguageHelpText: String {
         if transcriptionLanguage == "auto" {
-            return "Spoken language: Auto-detect. SpeakType will try to detect the language you are speaking."
+            return "Spoken language hint: Auto-detect. SpeakType will try to detect the language you are speaking."
         }
 
         return
-            "Spoken language: \(spokenLanguageDisplayName(for: transcriptionLanguage)). This guides transcription only and does not translate the output."
+            "Spoken language hint: \(spokenLanguageDisplayName(for: transcriptionLanguage)). If this does not match the language you actually speak, the result may be inaccurate or come back in the wrong language."
     }
 
     private var isAccessibilityEnabled: Bool {

@@ -214,10 +214,10 @@ struct GeneralSettingsTab: View {
                 SettingsSection {
                     SettingsSectionHeader(
                         icon: "globe", title: "Spoken Language",
-                        subtitle: "Language you are speaking during dictation")
+                        subtitle: "Hint for the language you are speaking")
 
                     HStack {
-                        Text("Dictation language")
+                        Text("Speech language")
                             .font(Typography.bodyMedium)
                             .foregroundStyle(Color.textPrimary)
                         Spacer()
@@ -258,12 +258,22 @@ struct GeneralSettingsTab: View {
                         .menuStyle(.borderlessButton)
                     }
 
-                    Text("This setting tells SpeakType which language you are speaking. It improves transcription accuracy, but it does not translate the result into another language.")
+                    Text("This is a hint for transcription. It does not choose an output language and it does not translate the result.")
                         .font(Typography.captionSmall)
                         .foregroundStyle(Color.textMuted)
                         .padding(.top, 4)
 
-                    Text("Use a multilingual model for non-English dictation. English-only models (.en) can only output English.")
+                    Text("If this does not match the language you actually speak, the result can be inaccurate or even come back in the wrong language. Auto-detect is the safest default.")
+                        .font(Typography.captionSmall)
+                        .foregroundStyle(Color.textMuted)
+                        .padding(.top, 4)
+
+                    Text("Use a multilingual model for non-English dictation. Accuracy for languages like Hindi depends heavily on the model you selected.")
+                        .font(Typography.captionSmall)
+                        .foregroundStyle(Color.textMuted)
+                        .padding(.top, 4)
+
+                    Text("English-only models (.en) can only output English.")
                         .font(Typography.captionSmall)
                         .foregroundStyle(Color.textMuted)
                         .padding(.top, 4)
