@@ -120,8 +120,15 @@ xcodebuild -scheme "speaktype" \
   OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime" \
   clean build
 
-APP_PATH=$(find build -name "speaktype.app" -type d | head -n 1)
+APP_PATH="build/Build/Products/Release/speaktype.app"
 [ -z "$APP_PATH" ] && { echo "❌ Could not find speaktype.app!"; exit 1; }
+[ -d "$APP_PATH" ] || { echo "❌ Release app not found at $APP_PATH"; exit 1; }
+
+APP_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_PATH/Contents/Info.plist")
+if [ "$APP_BUNDLE_ID" != "com.2048labs.speaktype" ]; then
+  echo "❌ Refusing to package unexpected app bundle: $APP_BUNDLE_ID"
+  exit 1
+fi
 
 echo ""
 echo "🔍 Verifying app signature..."
