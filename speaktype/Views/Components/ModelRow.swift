@@ -52,7 +52,10 @@ struct ModelRow: View {
 
                     // Model Details - Icons and stats
                     HStack(spacing: 14) {
-                        ModelMetaItem(icon: "globe", text: "Multilingual")
+                        ModelMetaItem(
+                            icon: model.isEnglishOnly ? "character.book.closed" : "globe",
+                            text: model.languageSupportLabel
+                        )
                         ModelMetaItem(icon: "arrow.down.circle", text: model.size)
 
                         // Speed rating
