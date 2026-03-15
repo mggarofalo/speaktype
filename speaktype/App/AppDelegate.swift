@@ -4,6 +4,10 @@ import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var miniRecorderController: MiniRecorderWindowController?
+    private var globalFlagsMonitor: Any?
+    private var localFlagsMonitor: Any?
+    private var hotkeyEventTap: CFMachPort?
+    private var hotkeyEventTapSource: CFRunLoopSource?
     var isHotkeyPressed = false
     private var cancellables = Set<AnyCancellable>()
     private var lastHandledHotkeyTimestamp: TimeInterval = 0
@@ -54,16 +58,84 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Hotkey Monitoring
 
     private func setupHotkeyMonitoring() {
+        setupSuppressingHotkeyEventTap()
+
         // Add global monitor for hotkey events
-        NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+        globalFlagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             self?.handleHotkeyEvent(event)
         }
 
         // Add local monitor for hotkey events (same logic)
-        NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+        localFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             self?.handleHotkeyEvent(event)
             return event
         }
+    }
+
+    private func setupSuppressingHotkeyEventTap() {
+        guard hotkeyEventTap == nil else { return }
+
+        let eventMask = (1 << CGEventType.flagsChanged.rawValue)
+        let callback: CGEventTapCallBack = { _, type, event, refcon in
+            guard let refcon else {
+                return Unmanaged.passUnretained(event)
+            }
+
+            let appDelegate = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
+            return appDelegate.handleHotkeyEventTap(type: type, event: event)
+        }
+
+        guard
+            let eventTap = CGEvent.tapCreate(
+                tap: .cgSessionEventTap,
+                place: .headInsertEventTap,
+                options: .defaultTap,
+                eventsOfInterest: CGEventMask(eventMask),
+                callback: callback,
+                userInfo: Unmanaged.passUnretained(self).toOpaque()
+            )
+        else {
+            print("Failed to create suppressing hotkey event tap")
+            return
+        }
+
+        let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        CGEvent.tapEnable(tap: eventTap, enable: true)
+
+        hotkeyEventTap = eventTap
+        hotkeyEventTapSource = runLoopSource
+    }
+
+    private func handleHotkeyEventTap(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let hotkeyEventTap {
+                CGEvent.tapEnable(tap: hotkeyEventTap, enable: true)
+            }
+            return Unmanaged.passUnretained(event)
+        }
+
+        guard type == .flagsChanged else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        let currentHotkey = getSelectedHotkey()
+        guard currentHotkey == .fn else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        guard keyCode == currentHotkey.keyCode else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        let isPressed = event.flags.contains(.maskSecondaryFn)
+        DispatchQueue.main.async { [weak self] in
+            self?.handleHotkeyStateChange(isPressed: isPressed)
+        }
+
+        // Suppress the Fn flagsChanged event so terminal apps do not receive raw CSI sequences.
+        return nil
     }
 
     private func handleHotkeyEvent(_ event: NSEvent) {
@@ -71,8 +143,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard event.keyCode == currentHotkey.keyCode else { return }
 
         let isPressed = event.modifierFlags.contains(currentHotkey.modifierFlag)
-        guard !isDuplicateHotkeyEvent(event, isPressed: isPressed) else { return }
+        handleHotkeyStateChange(isPressed: isPressed)
+    }
 
+    private func handleHotkeyStateChange(isPressed: Bool) {
+        guard !isDuplicateHotkeyEvent(isPressed: isPressed) else { return }
+
+        let currentHotkey = getSelectedHotkey()
         if isPressed && !isHotkeyPressed {
             isHotkeyPressed = true
 
@@ -100,12 +177,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func isDuplicateHotkeyEvent(_ event: NSEvent, isPressed: Bool) -> Bool {
+    private func isDuplicateHotkeyEvent(isPressed: Bool) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
         let isDuplicate =
-            abs(event.timestamp - lastHandledHotkeyTimestamp) < 0.05
+            abs(now - lastHandledHotkeyTimestamp) < 0.05
             && lastHandledHotkeyPressedState == isPressed
 
-        lastHandledHotkeyTimestamp = event.timestamp
+        lastHandledHotkeyTimestamp = now
         lastHandledHotkeyPressedState = isPressed
         return isDuplicate
     }
