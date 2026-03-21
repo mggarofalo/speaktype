@@ -46,4 +46,12 @@ final class WhisperServiceTests: XCTestCase {
 
         XCTAssertEqual(normalized, "answer")
     }
+
+    func testNormalizedTranscriptionRemovesNoiseOnlyArtifacts() {
+        let normalized = WhisperService.normalizedTranscription(
+            from: "[wind] (Loud noise) (indistinct)"
+        )
+
+        XCTAssertEqual(normalized, "")
+    }
 }

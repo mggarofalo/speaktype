@@ -53,8 +53,8 @@ struct MiniRecorderView: View {
     }
 
     private var currentLanguageLabel: String {
-        if transcriptionLanguage == "auto" { return "AUTO" }
-        return transcriptionLanguage.uppercased()
+        if transcriptionLanguage == "auto" { return "Auto" }
+        return spokenLanguageDisplayName(for: transcriptionLanguage)
     }
 
     private var spokenLanguageHelpText: String {
@@ -160,17 +160,16 @@ struct MiniRecorderView: View {
                                 Button("Clear recents") { recentLanguagesString = "" }
                             }
                         } label: {
-                            HStack(spacing: 4) {
-                                Text(currentLanguageLabel)
-                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 8, weight: .semibold))
-                            }
-                            .foregroundColor(.white.opacity(0.75))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 4)
-                            .background(Color.white.opacity(0.15))
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            Text(currentLanguageLabel)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.92))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .frame(maxWidth: 74, alignment: .leading)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.white.opacity(0.15))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
                         }
                         .menuStyle(.borderlessButton)
                         .fixedSize()
