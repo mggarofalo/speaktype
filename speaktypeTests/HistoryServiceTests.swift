@@ -60,6 +60,27 @@ final class HistoryServiceTests: XCTestCase {
         XCTAssertEqual(service.items.first?.transcript, "Item 2")
     }
 
+    func testDeleteItemRemovesAudioFileWhenPresent() throws {
+        let audioURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("m4a")
+        try Data("audio".utf8).write(to: audioURL)
+
+        service.addItem(
+            transcript: "Item with audio",
+            duration: 1.0,
+            audioFileURL: audioURL
+        )
+
+        let itemID = try XCTUnwrap(service.items.first?.id)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
+
+        service.deleteItem(id: itemID)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audioURL.path))
+        XCTAssertTrue(service.items.isEmpty)
+    }
+
     func testClearAllPreservesStatsHistory() {
         service.addItem(transcript: "One short note", duration: 10.0)
         service.addItem(transcript: "Another slightly longer note", duration: 20.0)

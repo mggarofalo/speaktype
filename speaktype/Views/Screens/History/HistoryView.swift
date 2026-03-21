@@ -4,6 +4,7 @@ struct HistoryView: View {
     @StateObject private var historyService = HistoryService.shared
     @StateObject private var audioPlayer = AudioPlayerService.shared
     @State private var showDeleteAlert = false
+    @State private var itemPendingDeletion: HistoryItem? = nil
     @State private var expandedItemId: UUID? = nil
     @State private var showCopyToast = false
     
@@ -82,13 +83,17 @@ struct HistoryView: View {
                                             audioPlayer.stop()
                                         } else {
                                             expandedItemId = item.id
-                                            if let audioURL = item.audioFileURL {
+                                            if let audioURL = item.audioFileURL,
+                                               FileManager.default.fileExists(atPath: audioURL.path) {
                                                 audioPlayer.loadAudio(from: audioURL)
+                                            } else {
+                                                audioPlayer.reset()
                                             }
                                         }
                                     }
                                 },
                                 onCopy: { copyToClipboard(text: item.transcript) },
+                                onDelete: { itemPendingDeletion = item },
                                 audioPlayer: audioPlayer
                             )
                         }
@@ -124,6 +129,35 @@ struct HistoryView: View {
             }
         } message: {
             Text("This removes your saved transcripts, but keeps your statistics history.")
+        }
+        .alert(
+            "Delete Transcript?",
+            isPresented: Binding(
+                get: { itemPendingDeletion != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        itemPendingDeletion = nil
+                    }
+                }
+            ),
+            presenting: itemPendingDeletion
+        ) { item in
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                if expandedItemId == item.id {
+                    expandedItemId = nil
+                    audioPlayer.reset()
+                }
+                historyService.deleteItem(id: item.id)
+                itemPendingDeletion = nil
+            }
+        } message: { item in
+            if let audioURL = item.audioFileURL,
+               FileManager.default.fileExists(atPath: audioURL.path) {
+                Text("This will remove the transcript and its saved audio file.")
+            } else {
+                Text("This will remove the transcript entry from your history.")
+            }
         }
     }
     
@@ -168,8 +202,14 @@ struct HistoryCard: View {
     let isExpanded: Bool
     let onToggle: () -> Void
     let onCopy: () -> Void
+    let onDelete: () -> Void
     @ObservedObject var audioPlayer: AudioPlayerService
     @State private var isHovered = false
+    
+    private var audioFileExists: Bool {
+        guard let audioURL = item.audioFileURL else { return false }
+        return FileManager.default.fileExists(atPath: audioURL.path)
+    }
     
     var wordCount: Int {
         item.transcript.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
@@ -280,7 +320,22 @@ struct HistoryCard: View {
                             }
                             .buttonStyle(.plain)
                             
-                            if let audioURL = item.audioFileURL {
+                            Button(role: .destructive, action: onDelete) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 12))
+                                    Text("Delete")
+                                        .font(Typography.labelMedium)
+                                }
+                                .foregroundStyle(Color.textSecondary)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Color.bgHover)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(.plain)
+                            
+                            if let audioURL = item.audioFileURL, audioFileExists {
                                 Button(action: {
                                     if audioPlayer.isPlaying {
                                         audioPlayer.pause()
@@ -318,11 +373,23 @@ struct HistoryCard: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 8))
                                 }
                                 .buttonStyle(.plain)
+                            } else if item.audioFileURL != nil {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .font(.system(size: 12))
+                                    Text("Audio file missing")
+                                        .font(Typography.labelMedium)
+                                }
+                                .foregroundStyle(Color.textMuted)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Color.bgHover.opacity(0.8))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
                             }
                         }
                         
                         // Audio waveform (if available)
-                        if let audioURL = item.audioFileURL {
+                        if let audioURL = item.audioFileURL, audioFileExists {
                             VStack(spacing: 12) {
                                 Divider()
                                 

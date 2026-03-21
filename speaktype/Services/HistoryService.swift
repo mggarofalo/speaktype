@@ -71,13 +71,21 @@ class HistoryService: ObservableObject {
         saveStats()
     }
     
-    func deleteItem(at offsets: IndexSet) {
+    func deleteItem(at offsets: IndexSet, deleteAudioFile: Bool = true) {
+        let itemsToDelete = offsets.compactMap { items.indices.contains($0) ? items[$0] : nil }
         items.remove(atOffsets: offsets)
+        if deleteAudioFile {
+            itemsToDelete.forEach(removeAudioFileIfNeeded(for:))
+        }
         saveHistory()
     }
     
-    func deleteItem(id: UUID) {
+    func deleteItem(id: UUID, deleteAudioFile: Bool = true) {
+        let itemToDelete = items.first { $0.id == id }
         items.removeAll { $0.id == id }
+        if deleteAudioFile, let itemToDelete {
+            removeAudioFileIfNeeded(for: itemToDelete)
+        }
         saveHistory()
     }
     
@@ -181,6 +189,12 @@ class HistoryService: ObservableObject {
     private func filteredStatsEntries(since startDate: Date?) -> [HistoryStatsEntry] {
         guard let startDate else { return statsEntries }
         return statsEntries.filter { $0.date >= startDate }
+    }
+
+    private func removeAudioFileIfNeeded(for item: HistoryItem) {
+        guard let audioFileURL = item.audioFileURL else { return }
+        guard FileManager.default.fileExists(atPath: audioFileURL.path) else { return }
+        try? FileManager.default.removeItem(at: audioFileURL)
     }
 
 #if DEBUG
