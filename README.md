@@ -6,7 +6,7 @@
 
 **Fast, Offline Voice-to-Text for macOS**
 
-![SpeakType app screenshot](image-1.png)
+![SpeakType app screenshot](image.png)
 [![Download](https://img.shields.io/badge/Download-SpeakType.dmg-blueviolet?logo=apple&logoColor=white)](https://github.com/karansinghgit/speaktype/releases/latest)
 [![Swift](https://img.shields.io/badge/Swift-5.9-orange?logo=swift)](https://swift.org)
 [![Platform](https://img.shields.io/badge/Platform-macOS%2013.0+-blue?logo=apple)](https://www.apple.com/macos/)
