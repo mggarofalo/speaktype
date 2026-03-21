@@ -38,4 +38,12 @@ final class WhisperServiceTests: XCTestCase {
 
         XCTAssertEqual(normalized, "hello")
     }
+
+    func testNormalizedTranscriptionRemovesBracketedNoiseLabels() {
+        let normalized = WhisperService.normalizedTranscription(
+            from: "[wind blowing] (heartbeat) answer [S]"
+        )
+
+        XCTAssertEqual(normalized, "answer")
+    }
 }

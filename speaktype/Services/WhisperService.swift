@@ -8,7 +8,38 @@ class WhisperService {
     private static let placeholderPatterns = [
         #"\[(?:BLANK_AUDIO|SILENCE)\]"#,
         #"<\|nospeech\|>"#,
+        #"\[\s*S\s*\]"#,
     ]
+    private static let noiseLabelTerms = [
+        "applause",
+        "background noise",
+        "blank audio",
+        "breathing",
+        "cough",
+        "coughing",
+        "exhale",
+        "heartbeat",
+        "inaudible",
+        "inhale",
+        "laughing",
+        "laughter",
+        "music",
+        "noise",
+        "silence",
+        "sigh",
+        "sighs",
+        "sniffing",
+        "static",
+        "unintelligible",
+        "wind",
+        "wind blowing",
+        "wind noise",
+    ]
+    private static let bracketedNoisePattern: String = {
+        let escaped = noiseLabelTerms.map(NSRegularExpression.escapedPattern(for:)).joined(
+            separator: "|")
+        return #"[\[\(]\s*(?:"# + escaped + #")\s*[\]\)]"#
+    }()
 
     var pipe: WhisperKit?
     var isInitialized = false
@@ -199,6 +230,12 @@ class WhisperService {
                 options: .regularExpression
             )
         }
+
+        normalized = normalized.replacingOccurrences(
+            of: bracketedNoisePattern,
+            with: " ",
+            options: [.regularExpression, .caseInsensitive]
+        )
 
         normalized = normalized.replacingOccurrences(
             of: #"\s+"#,

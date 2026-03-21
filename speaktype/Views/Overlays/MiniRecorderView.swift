@@ -19,9 +19,25 @@ struct MiniRecorderView: View {
     @AppStorage("recordingMode") private var recordingMode: Int = 0
     @AppStorage("transcriptionLanguage") private var transcriptionLanguage: String = "auto"
     @AppStorage("recentTranscriptionLanguages") private var recentLanguagesString: String = ""
+    private let quickLanguageDefaults = ["en", "es", "fr", "de", "hi", "pt", "ja", "zh"]
 
     private var recentLanguageCodes: [String] {
         recentLanguagesString.split(separator: ",").map(String.init).filter { !$0.isEmpty }
+    }
+
+    private var quickLanguageCodes: [String] {
+        var orderedCodes: [String] = []
+        let candidateCodes = [transcriptionLanguage] + recentLanguageCodes + quickLanguageDefaults
+
+        for code in candidateCodes where code != "auto" {
+            guard !orderedCodes.contains(code) else { continue }
+            guard GeneralSettingsTab.whisperLanguages.contains(where: { $0.code == code }) else {
+                continue
+            }
+            orderedCodes.append(code)
+        }
+
+        return Array(orderedCodes.prefix(6))
     }
 
     private func updateRecentLanguages(code: String) {
@@ -117,38 +133,55 @@ struct MiniRecorderView: View {
                     }
                     .frame(height: 30)
 
-                    // Language quick picker
-                    Menu {
-                        Button("Auto") { setLanguage("auto") }
-                        if !recentLanguageCodes.isEmpty {
-                            Divider()
-                            ForEach(recentLanguageCodes, id: \.self) { code in
-                                if let lang = GeneralSettingsTab.whisperLanguages.first(where: { $0.code == code }) {
-                                    Button(lang.name) { setLanguage(code) }
+                    HStack(spacing: 8) {
+                        Menu {
+                            Button("Auto-detect") { setLanguage("auto") }
+
+                            if !quickLanguageCodes.isEmpty {
+                                Divider()
+                                ForEach(quickLanguageCodes, id: \.self) { code in
+                                    if let lang = GeneralSettingsTab.whisperLanguages.first(where: {
+                                        $0.code == code
+                                    }) {
+                                        Button(lang.name) { setLanguage(code) }
+                                    }
                                 }
                             }
+
                             Divider()
-                            Button("Clear recents") { recentLanguagesString = "" }
-                        }
-                    } label: {
-                        Text(currentLanguageLabel)
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            Menu("More languages") {
+                                ForEach(GeneralSettingsTab.whisperLanguages, id: \.code) { lang in
+                                    Button(lang.name) { setLanguage(lang.code) }
+                                }
+                            }
+
+                            if !recentLanguageCodes.isEmpty {
+                                Divider()
+                                Button("Clear recents") { recentLanguagesString = "" }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(currentLanguageLabel)
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 8, weight: .semibold))
+                            }
                             .foregroundColor(.white.opacity(0.75))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 3)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
                             .background(Color.white.opacity(0.15))
                             .clipShape(RoundedRectangle(cornerRadius: 4))
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .help(spokenLanguageHelpText)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .help(spokenLanguageHelpText)
 
-                    // Recording mode indicator
-                    Image(systemName: recordingMode == 0 ? "hand.tap.fill" : "repeat.1")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.7))
-                        .padding(.leading, 4)
-                        .help(recordingMode == 0 ? "Hold to Record" : "Toggle to Record")
+                        // Recording mode indicator
+                        Image(systemName: recordingMode == 0 ? "hand.tap.fill" : "repeat.1")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.7))
+                            .help(recordingMode == 0 ? "Hold to Record" : "Toggle to Record")
+                    }
                 }
                 .padding(.horizontal, 12)
                 .transition(.opacity)
