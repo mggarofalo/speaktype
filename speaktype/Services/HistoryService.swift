@@ -32,10 +32,13 @@ class HistoryService: ObservableObject {
     }
     
     func addItem(transcript: String, duration: TimeInterval, audioFileURL: URL? = nil, modelUsed: String? = nil, transcriptionTime: TimeInterval? = nil) {
+        let normalizedTranscript = WhisperService.normalizedTranscription(from: transcript)
+        guard !normalizedTranscript.isEmpty else { return }
+
         let newItem = HistoryItem(
             id: UUID(),
             date: Date(),
-            transcript: transcript,
+            transcript: normalizedTranscript,
             duration: duration,
             audioFileURL: audioFileURL,
             modelUsed: modelUsed,
@@ -69,7 +72,31 @@ class HistoryService: ObservableObject {
     private func loadHistory() {
         if let data = UserDefaults.standard.data(forKey: saveKey),
            let decoded = try? JSONDecoder().decode([HistoryItem].self, from: data) {
-            items = decoded
+            let normalizedItems = decoded.compactMap { item -> HistoryItem? in
+                let normalizedTranscript = WhisperService.normalizedTranscription(
+                    from: item.transcript)
+                guard !normalizedTranscript.isEmpty else { return nil }
+
+                guard normalizedTranscript != item.transcript else { return item }
+
+                return HistoryItem(
+                    id: item.id,
+                    date: item.date,
+                    transcript: normalizedTranscript,
+                    duration: item.duration,
+                    audioFileURL: item.audioFileURL,
+                    modelUsed: item.modelUsed,
+                    transcriptionTime: item.transcriptionTime
+                )
+            }
+
+            items = normalizedItems
+
+            if normalizedItems.count != decoded.count
+                || zip(decoded, normalizedItems).contains(where: { $0.transcript != $1.transcript })
+            {
+                saveHistory()
+            }
         }
     }
 }

@@ -5,6 +5,45 @@ import WhisperKit
 class WhisperService {
     // Shared singleton instance - use this everywhere
     static let shared = WhisperService()
+    private static let placeholderPatterns = [
+        #"\[(?:BLANK_AUDIO|SILENCE)\]"#,
+        #"<\|nospeech\|>"#,
+        #"\[\s*S\s*\]"#,
+    ]
+    private static let noiseLabelTerms = [
+        "applause",
+        "background noise",
+        "blank audio",
+        "breathing",
+        "cough",
+        "coughing",
+        "exhale",
+        "heartbeat",
+        "indistinct",
+        "inaudible",
+        "inhale",
+        "laughing",
+        "laughter",
+        "loud noise",
+        "muffled speech",
+        "music",
+        "noise",
+        "silence",
+        "sigh",
+        "sighs",
+        "sniffing",
+        "static",
+        "unclear speech",
+        "unintelligible",
+        "wind",
+        "wind blowing",
+        "wind noise",
+    ]
+    private static let bracketedNoisePattern: String = {
+        let escaped = noiseLabelTerms.map(NSRegularExpression.escapedPattern(for:)).joined(
+            separator: "|")
+        return #"[\[\(]\s*(?:"# + escaped + #")\s*[\]\)]"#
+    }()
 
     var pipe: WhisperKit?
     var isInitialized = false
@@ -141,8 +180,8 @@ class WhisperService {
         do {
             let options = decodingOptions(for: language)
             let results = try await pipe.transcribe(audioPath: audioFile.path, decodeOptions: options)
-            let text = results.map { $0.text }.joined(separator: " ").trimmingCharacters(
-                in: .whitespacesAndNewlines)
+            let text = Self.normalizedTranscription(
+                from: results.map { $0.text }.joined(separator: " "))
 
             print("Transcription complete: \(text.prefix(50))...")
             return text
@@ -170,8 +209,7 @@ class WhisperService {
             audioPath: audioFile.path,
             decodeOptions: decodingOptions(for: language)
         )
-        let text = results.map { $0.text }.joined(separator: " ").trimmingCharacters(
-            in: .whitespacesAndNewlines)
+        let text = Self.normalizedTranscription(from: results.map { $0.text }.joined(separator: " "))
 
         print("🔪 Chunk done: \(text.prefix(40))...")
         // Clean up temp chunk file after transcription
@@ -184,5 +222,31 @@ class WhisperService {
         options.task = .transcribe
         options.language = (language == "auto") ? nil : language
         return options
+    }
+
+    static func normalizedTranscription(from rawText: String) -> String {
+        var normalized = rawText
+
+        for pattern in placeholderPatterns {
+            normalized = normalized.replacingOccurrences(
+                of: pattern,
+                with: " ",
+                options: .regularExpression
+            )
+        }
+
+        normalized = normalized.replacingOccurrences(
+            of: bracketedNoisePattern,
+            with: " ",
+            options: [.regularExpression, .caseInsensitive]
+        )
+
+        normalized = normalized.replacingOccurrences(
+            of: #"\s+"#,
+            with: " ",
+            options: .regularExpression
+        )
+
+        return normalized.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

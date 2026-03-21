@@ -37,6 +37,7 @@ class AudioRecordingService: NSObject, ObservableObject {
     private var chunkStartTime: Date?
     private var chunkFileURL: URL?
     private var isRotatingChunk = false  // Prevents concurrent rotations
+    private var shouldDiscardCurrentRecordingOutput = false
 
     private let audioQueue = DispatchQueue(label: "com.speaktype.audioQueue")
 
@@ -194,6 +195,7 @@ class AudioRecordingService: NSObject, ObservableObject {
 
         // 1. Reset flags and stale writer state before any new samples arrive.
         isStopping = false
+        shouldDiscardCurrentRecordingOutput = false
         resetMainWriterState()
         resetChunkWriterState()
         isRecording = true
@@ -256,11 +258,12 @@ class AudioRecordingService: NSObject, ObservableObject {
         }
     }
 
-    func stopRecording() async -> URL? {
+    func stopRecording(discardOutput: Bool = false) async -> URL? {
         // Wait for setup to complete if it's running
         _ = await setupTask?.value
 
         guard isRecording, let url = currentFileURL else { return nil }
+        shouldDiscardCurrentRecordingOutput = discardOutput
 
         // Ensure minimum recording duration to prevent empty/corrupted WAV files
         if let startTime = currentFileURL?.path.components(separatedBy: "-").last?
@@ -283,15 +286,10 @@ class AudioRecordingService: NSObject, ObservableObject {
 
         return await withCheckedContinuation { continuation in
             audioQueue.async {
-                // Stop the capture session first to prevent more audio data
-                self.captureSession?.stopRunning()
-
-                // Small delay to let any in-flight audio data finish
-                Thread.sleep(forTimeInterval: 0.1)
-
                 // --- Finalize the last in-flight chunk ---
                 let finishGroup = DispatchGroup()
                 var finalizedRecordingURL: URL?
+                let discardOutput = self.shouldDiscardCurrentRecordingOutput
 
                 if let lastChunkInput = self.chunkAssetWriterInput,
                     let lastChunkWriter = self.chunkAssetWriter,
@@ -304,7 +302,9 @@ class AudioRecordingService: NSObject, ObservableObject {
                     lastChunkInput.markAsFinished()
                     lastChunkWriter.finishWriting {
                         self.audioQueue.async {
-                            if let validChunkURL = self.validatedAudioFileURL(
+                            if discardOutput {
+                                try? FileManager.default.removeItem(at: lastChunkURL)
+                            } else if let validChunkURL = self.validatedAudioFileURL(
                                 at: lastChunkURL,
                                 writer: lastChunkWriter,
                                 label: "Final chunk"
@@ -329,15 +329,19 @@ class AudioRecordingService: NSObject, ObservableObject {
                     writerInput?.markAsFinished()
                     writer.finishWriting {
                         self.audioQueue.async {
-                            finalizedRecordingURL = self.validatedAudioFileURL(
-                                at: url,
-                                writer: writer,
-                                label: "Recording"
-                            )
-                            if let finalizedRecordingURL {
-                                print("Recording finished saving to \(finalizedRecordingURL.path)")
-                            } else {
+                            if discardOutput {
                                 try? FileManager.default.removeItem(at: url)
+                            } else {
+                                finalizedRecordingURL = self.validatedAudioFileURL(
+                                    at: url,
+                                    writer: writer,
+                                    label: "Recording"
+                                )
+                                if let finalizedRecordingURL {
+                                    print("Recording finished saving to \(finalizedRecordingURL.path)")
+                                } else {
+                                    try? FileManager.default.removeItem(at: url)
+                                }
                             }
                             finishGroup.leave()
                         }
@@ -346,6 +350,7 @@ class AudioRecordingService: NSObject, ObservableObject {
 
                 finishGroup.notify(queue: self.audioQueue) {
                     self.isStopping = false
+                    self.shouldDiscardCurrentRecordingOutput = false
                     continuation.resume(returning: finalizedRecordingURL)
                 }
             }
@@ -523,8 +528,12 @@ extension AudioRecordingService: AVCaptureAudioDataOutputSampleBufferDelegate {
         oldInput.markAsFinished()
         oldWriter.finishWriting { [weak self] in
             guard let self = self else { return }
-            print("🔪 Chunk saved: \(finishedURL.lastPathComponent)")
-            self.chunkPublisher.send(finishedURL)
+            if self.shouldDiscardCurrentRecordingOutput {
+                try? FileManager.default.removeItem(at: finishedURL)
+            } else {
+                print("🔪 Chunk saved: \(finishedURL.lastPathComponent)")
+                self.chunkPublisher.send(finishedURL)
+            }
         }
     }
 

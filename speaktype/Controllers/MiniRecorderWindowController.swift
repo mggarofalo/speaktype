@@ -52,6 +52,10 @@ class MiniRecorderWindowController: NSObject {
         NotificationCenter.default.post(name: .recordingStopRequested, object: nil)
     }
 
+    func cancelRecording() {
+        NotificationCenter.default.post(name: .recordingCancelRequested, object: nil)
+    }
+
     private func setupPanel() {
         // Initialize View with callbacks
         let recorderView = MiniRecorderView(
