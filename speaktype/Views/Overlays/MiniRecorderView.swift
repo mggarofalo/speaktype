@@ -166,6 +166,9 @@ struct MiniRecorderView: View {
         .onReceive(NotificationCenter.default.publisher(for: .recordingStopRequested)) { _ in
             stopAndTranscribe()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .recordingCancelRequested)) { _ in
+            cancelRecording()
+        }
         .onAppear {
             initializedService()
 
@@ -320,6 +323,27 @@ struct MiniRecorderView: View {
             stopAndTranscribe()
         } else {
             startRecording()
+        }
+    }
+
+    private func cancelRecording() {
+        cancelCommit = true
+
+        guard isListening || audioRecorder.isRecording else {
+            isProcessing = false
+            onCancel?()
+            return
+        }
+
+        Task {
+            _ = await audioRecorder.stopRecording(discardOutput: true)
+
+            await MainActor.run {
+                isListening = false
+                isProcessing = false
+                statusMessage = "Transcribing..."
+                onCancel?()
+            }
         }
     }
 

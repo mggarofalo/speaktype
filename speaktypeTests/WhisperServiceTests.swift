@@ -17,7 +17,7 @@ final class WhisperServiceTests: XCTestCase {
     func testDefaultInitialization() {
         guard let service = service else { return XCTFail("Service should be initialized") }
         XCTAssertFalse(service.isInitialized)
-        XCTAssertEqual(service.currentModelVariant, "openai_whisper-base.en")
+        XCTAssertEqual(service.currentModelVariant, "")
     }
     
     // Note: detailed loadModel tests require mocking the WhisperKit dependency
@@ -29,5 +29,13 @@ final class WhisperServiceTests: XCTestCase {
         // Simulate transcription start
         service.isTranscribing = true
         XCTAssertTrue(service.isTranscribing)
+    }
+
+    func testNormalizedTranscriptionRemovesBlankAudioPlaceholders() {
+        let normalized = WhisperService.normalizedTranscription(
+            from: " [BLANK_AUDIO]  hello   <|nospeech|> [SILENCE] "
+        )
+
+        XCTAssertEqual(normalized, "hello")
     }
 }

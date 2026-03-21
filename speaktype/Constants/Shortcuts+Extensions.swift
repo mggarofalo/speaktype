@@ -10,4 +10,5 @@ extension Notification.Name {
     static let hotkeyTriggered = Notification.Name("hotkeyTriggered") // Legacy, can be removed
     static let recordingStartRequested = Notification.Name("recordingStartRequested")
     static let recordingStopRequested = Notification.Name("recordingStopRequested")
+    static let recordingCancelRequested = Notification.Name("recordingCancelRequested")
 }

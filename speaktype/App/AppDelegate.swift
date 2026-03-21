@@ -8,9 +8,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
     private var lastHandledHotkeyTimestamp: TimeInterval = 0
     private var lastHandledHotkeyPressedState = false
+    private var globalFlagsMonitor: Any?
+    private var localFlagsMonitor: Any?
+    private var globalKeyDownMonitor: Any?
+    private var localKeyDownMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         miniRecorderController = MiniRecorderWindowController()
+        AudioRecordingService.shared.prewarmSession()
 
         // Setup dynamic hotkey monitoring based on user selection
         setupHotkeyMonitoring()
@@ -55,13 +60,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupHotkeyMonitoring() {
         // Add global monitor for hotkey events
-        NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+        globalFlagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) {
+            [weak self] event in
             self?.handleHotkeyEvent(event)
         }
 
         // Add local monitor for hotkey events (same logic)
-        NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+        localFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) {
+            [weak self] event in
             self?.handleHotkeyEvent(event)
+            return event
+        }
+
+        globalKeyDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            self?.handleModifierComboEvent(event)
+        }
+
+        localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            self?.handleModifierComboEvent(event)
             return event
         }
     }
@@ -98,6 +116,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 miniRecorderController?.stopRecording()
             }
         }
+    }
+
+    private func handleModifierComboEvent(_ event: NSEvent) {
+        guard isHotkeyPressed else { return }
+        guard UserDefaults.standard.integer(forKey: "recordingMode") == 0 else { return }
+        guard !event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else { return }
+        guard event.keyCode != getSelectedHotkey().keyCode else { return }
+
+        isHotkeyPressed = false
+        miniRecorderController?.cancelRecording()
     }
 
     private func isDuplicateHotkeyEvent(_ event: NSEvent, isPressed: Bool) -> Bool {
