@@ -11,9 +11,6 @@ import SwiftUI
 
 @main
 struct speaktypeApp: App {
-    @Environment(\.openWindow) var openWindow
-    @Environment(\.dismissWindow) var dismissWindow
-
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
     @AppStorage("appTheme") private var appTheme: AppTheme = .system
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
@@ -55,25 +52,7 @@ struct speaktypeApp: App {
         .handlesExternalEvents(matching: ["main-dashboard", "open"])  // Only open for matching IDs
         .commands {
             SidebarCommands()
-            CommandGroup(after: .appInfo) {
-                Button("Manage License...") {
-                    openWindow(id: "license-window")
-                }
-                .keyboardShortcut("L", modifiers: [.command, .shift])
-            }
         }
-
-        // License Window
-        Window("License", id: "license-window") {
-            ThemeProvider {
-                LicenseView()
-            }
-            .environmentObject(licenseManager)
-            .preferredColorScheme(appTheme.colorScheme)
-            .frame(width: 480, height: 520)
-        }
-        .windowResizability(.contentSize)
-        .defaultPosition(.center)
 
         // Note: Mini Recorder is now managed manually by AppDelegate -> MiniRecorderWindowController
         // to prevent SwiftUI from auto-opening the main dashboard on activation.
