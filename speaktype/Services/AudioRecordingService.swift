@@ -254,6 +254,9 @@ class AudioRecordingService: NSObject, ObservableObject {
             } catch {
                 print("Error starting recording: \(error)")
                 isRecording = false  // Revert if failed
+                audioQueue.async {
+                    self.captureSession?.stopRunning()
+                }
             }
         }
     }
@@ -349,6 +352,8 @@ class AudioRecordingService: NSObject, ObservableObject {
                 }
 
                 finishGroup.notify(queue: self.audioQueue) {
+                    // Keep microphone fully idle outside active recordings.
+                    self.captureSession?.stopRunning()
                     self.isStopping = false
                     self.shouldDiscardCurrentRecordingOutput = false
                     continuation.resume(returning: finalizedRecordingURL)
