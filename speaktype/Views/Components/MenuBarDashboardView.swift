@@ -316,14 +316,3 @@ private struct MenuBarTranscriptRow: View {
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
-
-struct MenuBarStatusIcon: View {
-    var body: some View {
-        Image("MenuBarWave")
-            .renderingMode(.original)
-            .resizable()
-            .scaledToFit()
-            .frame(width: 18, height: 18)
-            .accessibilityLabel("SpeakType")
-    }
-}
