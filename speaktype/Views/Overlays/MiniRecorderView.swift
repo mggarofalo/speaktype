@@ -167,9 +167,7 @@ struct MiniRecorderView: View {
                                     .lineLimit(1)
                                     .truncationMode(.tail)
 
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 8, weight: .semibold))
-                                    .foregroundColor(.white.opacity(0.92))
+                                DoubleChevronIcon(color: .white.opacity(0.92))
                             }
                             .frame(maxWidth: 74, alignment: .leading)
                             .padding(.horizontal, 8)
@@ -675,6 +673,49 @@ struct HorizontalWave: Shape {
         }
 
         return path
+    }
+}
+
+struct ChevronShape: Shape {
+    let pointsUp: Bool
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+
+        if pointsUp {
+            path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.midX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        } else {
+            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        }
+
+        return path
+    }
+}
+
+struct DoubleChevronIcon: View {
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: 1) {
+            ChevronShape(pointsUp: true)
+                .stroke(
+                    color,
+                    style: StrokeStyle(lineWidth: 1.35, lineCap: .round, lineJoin: .round)
+                )
+                .frame(width: 7, height: 4)
+
+            ChevronShape(pointsUp: false)
+                .stroke(
+                    color,
+                    style: StrokeStyle(lineWidth: 1.35, lineCap: .round, lineJoin: .round)
+                )
+                .frame(width: 7, height: 4)
+        }
+        .frame(width: 8, height: 10)
     }
 }
 

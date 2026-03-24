@@ -58,18 +58,24 @@ struct speaktypeApp: App {
         // to prevent SwiftUI from auto-opening the main dashboard on activation.
 
         // Menu Bar Extra (Always running listener)
-        MenuBarExtra("SpeakType", systemImage: "mic.fill", isInserted: $showMenuBarIcon) {
-            Button("Open Dashboard") {
-                // Ensure we open the main dashboard via consistent ID or URL
-                // Using URL forces the specific window group to handle it
-                if let url = URL(string: "speaktype://open") {
-                    NSWorkspace.shared.open(url)
-                }
+        MenuBarExtra(isInserted: $showMenuBarIcon) {
+            ThemeProvider {
+                MenuBarDashboardView(
+                    openDashboard: openDashboard,
+                    quit: { NSApplication.shared.terminate(nil) }
+                )
             }
-            Divider()
-            Button("Quit") {
-                NSApplication.shared.terminate(nil)
-            }
+            .preferredColorScheme(appTheme.colorScheme)
+        } label: {
+            MenuBarStatusIcon()
+        }
+        .menuBarExtraStyle(.window)
+    }
+
+    private func openDashboard() {
+        // Using URL forces the specific window group to handle the request consistently.
+        if let url = URL(string: "speaktype://open") {
+            NSWorkspace.shared.open(url)
         }
     }
 }
