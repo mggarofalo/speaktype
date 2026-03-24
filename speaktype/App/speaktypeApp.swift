@@ -11,9 +11,6 @@ import SwiftUI
 
 @main
 struct speaktypeApp: App {
-    @Environment(\.openWindow) var openWindow
-    @Environment(\.dismissWindow) var dismissWindow
-
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
     @AppStorage("appTheme") private var appTheme: AppTheme = .system
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
@@ -55,42 +52,28 @@ struct speaktypeApp: App {
         .handlesExternalEvents(matching: ["main-dashboard", "open"])  // Only open for matching IDs
         .commands {
             SidebarCommands()
-            CommandGroup(after: .appInfo) {
-                Button("Manage License...") {
-                    openWindow(id: "license-window")
-                }
-                .keyboardShortcut("L", modifiers: [.command, .shift])
-            }
         }
-
-        // License Window
-        Window("License", id: "license-window") {
-            ThemeProvider {
-                LicenseView()
-            }
-            .environmentObject(licenseManager)
-            .preferredColorScheme(appTheme.colorScheme)
-            .frame(width: 480, height: 520)
-        }
-        .windowResizability(.contentSize)
-        .defaultPosition(.center)
 
         // Note: Mini Recorder is now managed manually by AppDelegate -> MiniRecorderWindowController
         // to prevent SwiftUI from auto-opening the main dashboard on activation.
 
         // Menu Bar Extra (Always running listener)
-        MenuBarExtra("SpeakType", systemImage: "mic.fill", isInserted: $showMenuBarIcon) {
-            Button("Open Dashboard") {
-                // Ensure we open the main dashboard via consistent ID or URL
-                // Using URL forces the specific window group to handle it
-                if let url = URL(string: "speaktype://open") {
-                    NSWorkspace.shared.open(url)
-                }
+        MenuBarExtra("SpeakType", systemImage: "waveform", isInserted: $showMenuBarIcon) {
+            ThemeProvider {
+                MenuBarDashboardView(
+                    openDashboard: openDashboard,
+                    quit: { NSApplication.shared.terminate(nil) }
+                )
             }
-            Divider()
-            Button("Quit") {
-                NSApplication.shared.terminate(nil)
-            }
+            .preferredColorScheme(appTheme.colorScheme)
+        }
+        .menuBarExtraStyle(.window)
+    }
+
+    private func openDashboard() {
+        // Using URL forces the specific window group to handle the request consistently.
+        if let url = URL(string: "speaktype://open") {
+            NSWorkspace.shared.open(url)
         }
     }
 }

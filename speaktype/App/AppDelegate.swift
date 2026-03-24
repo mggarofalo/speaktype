@@ -17,7 +17,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         miniRecorderController = MiniRecorderWindowController()
-        AudioRecordingService.shared.prewarmSession()
 
         // Setup dynamic hotkey monitoring based on user selection
         setupHotkeyMonitoring()

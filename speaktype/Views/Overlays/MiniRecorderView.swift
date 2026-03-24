@@ -160,17 +160,22 @@ struct MiniRecorderView: View {
                                 Button("Clear recents") { recentLanguagesString = "" }
                             }
                         } label: {
-                            Text(currentLanguageLabel)
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.92))
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .frame(maxWidth: 74, alignment: .leading)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.white.opacity(0.15))
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                            HStack(spacing: 6) {
+                                Text(currentLanguageLabel)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.92))
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+
+                                DoubleChevronIcon(color: .white.opacity(0.92))
+                            }
+                            .frame(maxWidth: 74, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.white.opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
                         }
+                        .menuIndicator(.hidden)
                         .menuStyle(.borderlessButton)
                         .fixedSize()
                         .help(spokenLanguageHelpText)
@@ -671,6 +676,49 @@ struct HorizontalWave: Shape {
     }
 }
 
+struct ChevronShape: Shape {
+    let pointsUp: Bool
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+
+        if pointsUp {
+            path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.midX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        } else {
+            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        }
+
+        return path
+    }
+}
+
+struct DoubleChevronIcon: View {
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: 1) {
+            ChevronShape(pointsUp: true)
+                .stroke(
+                    color,
+                    style: StrokeStyle(lineWidth: 1.35, lineCap: .round, lineJoin: .round)
+                )
+                .frame(width: 7, height: 4)
+
+            ChevronShape(pointsUp: false)
+                .stroke(
+                    color,
+                    style: StrokeStyle(lineWidth: 1.35, lineCap: .round, lineJoin: .round)
+                )
+                .frame(width: 7, height: 4)
+        }
+        .frame(width: 8, height: 10)
+    }
+}
+
 struct VisualEffectBlur: NSViewRepresentable {
     var material: NSVisualEffectView.Material
     var blendingMode: NSVisualEffectView.BlendingMode
@@ -710,6 +758,9 @@ struct KeyEventHandlerView: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         if let view = nsView as? KeyCaptureView {
             view.onEscape = onEscape
+            DispatchQueue.main.async {
+                view.window?.makeFirstResponder(view)
+            }
         }
     }
 
@@ -717,6 +768,14 @@ struct KeyEventHandlerView: NSViewRepresentable {
         var onEscape: (() -> Void)?
 
         override var acceptsFirstResponder: Bool { true }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.window?.makeFirstResponder(self)
+            }
+        }
 
         override func keyDown(with event: NSEvent) {
             if event.keyCode == 53 {  // Escape key
