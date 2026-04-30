@@ -1,0 +1,109 @@
+name: Bug report
+description: Report something that is not working in SpeakType.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Clear details make it much easier to reproduce and fix.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you were trying to do.
+      placeholder: SpeakType started recording, but...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the exact actions that trigger the issue.
+      placeholder: |
+        1. Open SpeakType
+        2. Press the hotkey
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect SpeakType to do instead?
+    validations:
+      required: true
+
+  - type: input
+    id: speaktype-version
+    attributes:
+      label: SpeakType version
+      placeholder: v1.0.29
+    validations:
+      required: true
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      placeholder: macOS 15.7.3 or macOS 26.2
+    validations:
+      required: true
+
+  - type: input
+    id: mac-details
+    attributes:
+      label: Mac details
+      description: Include chip and memory if you know them.
+      placeholder: M1 Max, 32 GB RAM
+    validations:
+      required: true
+
+  - type: dropdown
+    id: recording-mode
+    attributes:
+      label: Recording mode
+      options:
+        - Hold to record
+        - Toggle
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: AI model
+      placeholder: Tiny, Base, Large v3, Large v3 Turbo, etc.
+    validations:
+      required: false
+
+  - type: input
+    id: input-device
+    attributes:
+      label: Microphone or input device
+      placeholder: Built-in microphone, AirPods, external USB mic, etc.
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Screenshots or logs
+      description: Add screenshots, screen recordings, or relevant Console logs if available.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I am using the latest available SpeakType version.
+          required: true
+        - label: I searched existing issues and did not find the same report.
+          required: true
