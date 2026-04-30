@@ -8,8 +8,8 @@ body:
       value: |
         Thanks for taking the time to report this.
 
-        Before filing, open SpeakType and go to `Settings > General > Support`, then click `Copy Support Info`.
-        Paste that output below so the report already includes the version, macOS details, permissions, model, and current settings.
+        If your SpeakType build has `Settings > General > Support`, click `Copy Support Info` and paste that output below.
+        If not, that is fine. Please include your SpeakType version and macOS version in the report description.
 
   - type: textarea
     id: summary
@@ -44,10 +44,8 @@ body:
     id: support-info
     attributes:
       label: Support info
-      description: Paste the output from `Settings > General > Support > Copy Support Info`.
+      description: Optional. Paste the output from `Settings > General > Support > Copy Support Info`.
       render: shell
-    validations:
-      required: true
 
   - type: textarea
     id: logs
