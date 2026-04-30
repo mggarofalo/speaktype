@@ -6,7 +6,10 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report this. Clear details make it much easier to reproduce and fix.
+        Thanks for taking the time to report this.
+
+        Before filing, open SpeakType and go to `Settings > General > Support`, then click `Copy Support Info`.
+        Paste that output below so the report already includes the version, macOS details, permissions, model, and current settings.
 
   - type: textarea
     id: summary
@@ -37,57 +40,14 @@ body:
     validations:
       required: true
 
-  - type: input
-    id: speaktype-version
+  - type: textarea
+    id: support-info
     attributes:
-      label: SpeakType version
-      placeholder: v1.0.29
+      label: Support info
+      description: Paste the output from `Settings > General > Support > Copy Support Info`.
+      render: shell
     validations:
       required: true
-
-  - type: input
-    id: macos-version
-    attributes:
-      label: macOS version
-      placeholder: macOS 15.7.3 or macOS 26.2
-    validations:
-      required: true
-
-  - type: input
-    id: mac-details
-    attributes:
-      label: Mac details
-      description: Include chip and memory if you know them.
-      placeholder: M1 Max, 32 GB RAM
-    validations:
-      required: true
-
-  - type: dropdown
-    id: recording-mode
-    attributes:
-      label: Recording mode
-      options:
-        - Hold to record
-        - Toggle
-        - Not sure
-    validations:
-      required: true
-
-  - type: input
-    id: model
-    attributes:
-      label: AI model
-      placeholder: Tiny, Base, Large v3, Large v3 Turbo, etc.
-    validations:
-      required: false
-
-  - type: input
-    id: input-device
-    attributes:
-      label: Microphone or input device
-      placeholder: Built-in microphone, AirPods, external USB mic, etc.
-    validations:
-      required: false
 
   - type: textarea
     id: logs
@@ -103,7 +63,5 @@ body:
     attributes:
       label: Before submitting
       options:
-        - label: I am using the latest available SpeakType version.
-          required: true
         - label: I searched existing issues and did not find the same report.
           required: true
