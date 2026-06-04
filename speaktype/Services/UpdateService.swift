@@ -39,8 +39,10 @@ class UpdateService: ObservableObject {
         await MainActor.run { isCheckingForUpdates = true }
 
         do {
+            // Points at this fork, not upstream — an upstream release must never
+            // replace the locally patched build. 404 (no releases) is harmless.
             let url = URL(
-                string: "https://api.github.com/repos/karansinghgit/speaktype/releases/latest")!
+                string: "https://api.github.com/repos/mggarofalo/speaktype/releases/latest")!
             var request = URLRequest(url: url)
             request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
 
