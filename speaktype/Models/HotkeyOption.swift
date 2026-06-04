@@ -10,7 +10,11 @@ enum HotkeyOption: String, Codable, CaseIterable, Identifiable {
     case leftControl = "leftControl"
     case rightOption = "rightOption"
     case leftOption = "leftOption"
-    
+    /// A user-recorded modifier+key chord (e.g. ⌃V), handled via the
+    /// KeyboardShortcuts package rather than flagsChanged monitoring.
+    /// The recorded chord lives under KeyboardShortcuts.Name.dictationChord.
+    case chord = "chord"
+
     var id: String { rawValue }
     
     /// Display name with appropriate symbols
@@ -30,6 +34,8 @@ enum HotkeyOption: String, Codable, CaseIterable, Identifiable {
             return "Right ⌥"
         case .leftOption:
             return "Left ⌥"
+        case .chord:
+            return "Custom Chord"
         }
     }
     
@@ -50,6 +56,8 @@ enum HotkeyOption: String, Codable, CaseIterable, Identifiable {
             return 61
         case .leftOption:
             return 58
+        case .chord:
+            return 0xFFFF  // Sentinel — chords are not matched by key code
         }
     }
     
@@ -64,6 +72,8 @@ enum HotkeyOption: String, Codable, CaseIterable, Identifiable {
             return .control
         case .rightOption, .leftOption:
             return .option
+        case .chord:
+            return []  // Chords are matched by KeyboardShortcuts, not modifier flags
         }
     }
     
