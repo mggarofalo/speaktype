@@ -4,26 +4,19 @@ Fork of [karansinghgit/speaktype](https://github.com/karansinghgit/speaktype). `
 
 ## Build, Sign & Install
 
-Xcode automatic signing is configured for the upstream maintainer's team (`PCV4UMSRZX`) and will fail locally. Build with overrides:
+The project signs with `CODE_SIGN_IDENTITY = "SpeakType Local Dev"` — a self-signed cert in the login keychain (created 2026-06-04, 10-year validity). Plain builds just work:
 
 ```bash
-xcodebuild -project speaktype.xcodeproj -scheme speaktype -configuration Release \
-  -derivedDataPath /tmp/speaktype-build \
-  CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= AD_HOC_CODE_SIGNING_ALLOWED=YES build
+xcodebuild -project speaktype.xcodeproj -scheme speaktype -configuration Release build
 ```
 
-Install = `ditto` the built .app over `/Applications/speaktype.app`, then **always re-sign**:
+Install = quit the app, `ditto` the built .app over `/Applications/speaktype.app`, relaunch. No re-signing step.
 
-```bash
-codesign --force --sign "SpeakType Local Dev" /Applications/speaktype.app
-```
+Signing constraints (load-bearing — do not "modernize" these):
 
-The re-sign step is load-bearing twice over:
-
-1. The raw build is ad-hoc signed **with hardened runtime**, and ad-hoc + library validation makes dyld refuse the embedded `WhisperKit.framework` — the app crashes at launch (`Library not loaded`). The plain `codesign --force --sign` strips the runtime flag.
-2. "SpeakType Local Dev" is a self-signed identity in the login keychain. A *stable* identity keeps TCC grants valid across rebuilds. Do not ship ad-hoc (`-`) signed installs: every rebuild changes the CDHash and silently invalidates Accessibility.
-
-`make install` does NOT do the re-sign step — don't use it as-is.
+- **Keep the stable identity.** TCC grants (Accessibility, Microphone) are tied to the signing identity; ad-hoc (`-`) signing changes the CDHash every rebuild and silently invalidates them.
+- **Keep `ENABLE_HARDENED_RUNTIME = NO`.** A self-signed identity has no Team ID, so hardened-runtime library validation makes dyld refuse the embedded `WhisperKit.framework` (`Library not loaded` crash at launch).
+- Building on another machine requires recreating the cert: self-signed code-signing cert named "SpeakType Local Dev", imported to login keychain, trusted for codeSign. macOS rejects OpenSSL 3.x PKCS12 defaults — export with `-legacy`.
 
 ## TCC / Permission Gotchas
 
