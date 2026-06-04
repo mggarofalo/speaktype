@@ -119,19 +119,24 @@ class MiniRecorderWindowController: NSObject {
 
     private func handleCommit(text: String) {
         Task {
-            // 1. Copy to clipboard
-            ClipboardService.shared.copy(text: text)
+            // 1. Check accessibility first — it decides the delivery mechanism.
+            let accessibilityTrusted = ClipboardService.shared.isAccessibilityTrusted
 
-            // 2. Close panel
+            // 2. Copy to clipboard. When auto-paste will run, the clipboard is
+            // only a transport — snapshot the user's contents for restore (#62).
+            // Without accessibility the clipboard IS the delivery, so keep it.
+            if accessibilityTrusted {
+                ClipboardService.shared.copyTranscriptPreservingClipboard(text)
+            } else {
+                ClipboardService.shared.copy(text: text)
+            }
+
+            // 3. Close panel
             await MainActor.run {
                 self.panel?.orderOut(nil)
             }
 
-            // 3. Check accessibility - if not granted, just copy to clipboard silently
-            let accessibilityTrusted = ClipboardService.shared.isAccessibilityTrusted
-
             if !accessibilityTrusted {
-                // Text is already copied to clipboard, just return
                 // Don't show annoying popup - user can paste manually with Cmd+V
                 print(
                     "⚠️ Accessibility not granted - text copied to clipboard, user can paste with Cmd+V"
@@ -152,6 +157,14 @@ class MiniRecorderWindowController: NSObject {
             // 6. Paste using CGEvent (Accessibility permission only)
             await MainActor.run {
                 ClipboardService.shared.paste()
+            }
+
+            // 7. Give the target app time to consume the ⌘V, then put the
+            // user's original clipboard back. Restoring too early would make
+            // the paste deliver the OLD clipboard instead of the transcript.
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            await MainActor.run {
+                ClipboardService.shared.restorePreservedClipboard()
             }
         }
     }
