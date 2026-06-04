@@ -1,3 +1,4 @@
+import CoreML
 import Foundation
 import WhisperKit
 
@@ -131,7 +132,14 @@ class WhisperService {
             let config = WhisperKitConfig(
                 model: variant,
                 modelFolder: modelFolderPath,
-                computeOptions: ModelComputeOptions(),  // Uses GPU + Neural Engine
+                // GPU instead of the default Neural Engine: identical transcription
+                // output, but skips CoreML's ANE specialization pass at load, which
+                // dominates startup (measured 3m08s ANE vs 56s GPU end-to-end for
+                // large-v3_turbo on an M2 Pro/Max).
+                computeOptions: ModelComputeOptions(
+                    audioEncoderCompute: .cpuAndGPU,
+                    textDecoderCompute: .cpuAndGPU
+                ),
                 verbose: false,
                 logLevel: .error,
                 prewarm: true,  // Built-in model specialization (replaces manual warmup)
