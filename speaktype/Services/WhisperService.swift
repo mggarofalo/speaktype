@@ -121,16 +121,12 @@ class WhisperService {
         }
 
         do {
-            let documentDirectory = FileManager.default.urls(
-                for: .documentDirectory, in: .userDomainMask
-            ).first!
-            let modelFolderPath = documentDirectory.appendingPathComponent(
-                "huggingface/models/argmaxinc/whisperkit-coreml/\(variant)"
-            ).path
+            let modelFolderPath = ModelStorage.modelFolderURL(variant: variant).path
 
             // Use WhisperKitConfig with optimized settings
             let config = WhisperKitConfig(
                 model: variant,
+                downloadBase: ModelStorage.baseURL,
                 modelFolder: modelFolderPath,
                 // GPU instead of the default Neural Engine: identical transcription
                 // output, but skips CoreML's ANE specialization pass at load, which
