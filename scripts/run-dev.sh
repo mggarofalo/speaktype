@@ -3,7 +3,7 @@
 set -euo pipefail
 
 APP_NAME="SpeakType-Dev"
-BUNDLE_ID="com.2048labs.speaktype.dev"
+BUNDLE_ID="com.mggarofalo.speaktype.dev"
 DERIVED_DATA_PATH="$PWD/build/dev-derived"
 BUILD_PRODUCTS_PATH="$DERIVED_DATA_PATH/Build/Products/Debug"
 DEST_APP_PATH="$HOME/Applications/${APP_NAME}.app"
