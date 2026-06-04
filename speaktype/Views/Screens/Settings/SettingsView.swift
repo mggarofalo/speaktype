@@ -92,6 +92,7 @@ struct GeneralSettingsTab: View {
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
     @AppStorage("hideDockIcon") private var hideDockIcon: Bool = false
     @AppStorage("removeFillerWords") private var removeFillerWords: Bool = false
+    @AppStorage("pauseMediaDuringRecording") private var pauseMediaDuringRecording: Bool = false
     @AppStorage("transcriptionLanguage") private var transcriptionLanguage: String = "auto"
     @AppStorage("recentTranscriptionLanguages") private var recentLanguagesString: String = ""
 
@@ -250,6 +251,21 @@ struct GeneralSettingsTab: View {
                             }
 
                             Text("Strips \"um\", \"uh\", \"erm\", and \"hmm\" from transcriptions.")
+                                .font(Typography.captionSmall)
+                                .foregroundStyle(Color.textMuted)
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Pause media while recording")
+                                    .font(Typography.bodyMedium)
+                                    .foregroundStyle(Color.textPrimary)
+                                Spacer()
+                                Toggle("", isOn: $pauseMediaDuringRecording)
+                                    .labelsHidden()
+                            }
+
+                            Text("Pauses Music or Spotify when dictation starts and resumes after.")
                                 .font(Typography.captionSmall)
                                 .foregroundStyle(Color.textMuted)
                         }
