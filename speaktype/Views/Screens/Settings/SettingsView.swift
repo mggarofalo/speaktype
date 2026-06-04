@@ -91,6 +91,7 @@ struct GeneralSettingsTab: View {
     @AppStorage("recordingMode") private var recordingMode: Int = 0  // 0: Hold to record, 1: Toggle
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
     @AppStorage("hideDockIcon") private var hideDockIcon: Bool = false
+    @AppStorage("removeFillerWords") private var removeFillerWords: Bool = false
     @AppStorage("transcriptionLanguage") private var transcriptionLanguage: String = "auto"
     @AppStorage("recentTranscriptionLanguages") private var recentLanguagesString: String = ""
 
@@ -236,6 +237,21 @@ struct GeneralSettingsTab: View {
                                     .font(Typography.captionSmall)
                                     .foregroundStyle(Color.textMuted)
                             }
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Remove filler words")
+                                    .font(Typography.bodyMedium)
+                                    .foregroundStyle(Color.textPrimary)
+                                Spacer()
+                                Toggle("", isOn: $removeFillerWords)
+                                    .labelsHidden()
+                            }
+
+                            Text("Strips \"um\", \"uh\", \"erm\", and \"hmm\" from transcriptions.")
+                                .font(Typography.captionSmall)
+                                .foregroundStyle(Color.textMuted)
                         }
                     }
                 }

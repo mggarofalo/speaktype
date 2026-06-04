@@ -228,7 +228,15 @@ class WhisperService {
         return options
     }
 
-    static func normalizedTranscription(from rawText: String) -> String {
+    /// Filler words removed when the "Remove filler words" setting is on.
+    /// Word-boundary anchored so e.g. "ahead" or "umbrella" are never touched;
+    /// a trailing comma/period left behind by the filler is consumed with it.
+    private static let fillerWordPattern = #"(?i)\b(?:um+|uh+|erm+|hmm+|mhm+)\b[,.]?"#
+
+    static func normalizedTranscription(
+        from rawText: String,
+        removeFillerWords: Bool = UserDefaults.standard.bool(forKey: "removeFillerWords")
+    ) -> String {
         var normalized = rawText
 
         for pattern in placeholderPatterns {
@@ -244,6 +252,21 @@ class WhisperService {
             with: " ",
             options: [.regularExpression, .caseInsensitive]
         )
+
+        if removeFillerWords {
+            normalized = normalized.replacingOccurrences(
+                of: fillerWordPattern,
+                with: " ",
+                options: .regularExpression
+            )
+            // A filler at the start of a sentence can leave a stranded
+            // lowercase start or " ," artifacts; collapse leftover punctuation.
+            normalized = normalized.replacingOccurrences(
+                of: #"\s+([,.])"#,
+                with: "$1",
+                options: .regularExpression
+            )
+        }
 
         normalized = normalized.replacingOccurrences(
             of: #"\s+"#,
