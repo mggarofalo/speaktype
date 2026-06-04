@@ -34,6 +34,17 @@ class MiniRecorderWindowController: NSObject {
                 panel.center()
             }
 
+            // Showing any window while the app is hidden (⌘H) makes AppKit unhide
+            // the entire app, which would also restore the main window behind the
+            // user's current app. Unhide explicitly and order out every other
+            // window first so only the recorder panel appears.
+            if NSApp.isHidden {
+                NSApp.unhideWithoutActivation()
+                for window in NSApp.windows where window !== panel {
+                    window.orderOut(nil)
+                }
+            }
+
             // Show without activating to avoid pulling main app focus unnecessarily
             panel.orderFrontRegardless()
         }
