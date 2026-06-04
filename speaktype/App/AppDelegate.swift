@@ -16,6 +16,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var localKeyDownMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Self.applyDockIconPolicy()
+
         miniRecorderController = MiniRecorderWindowController()
 
         // Setup dynamic hotkey monitoring based on user selection
@@ -33,6 +35,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
+    }
+
+    // MARK: - Dock Icon
+
+    /// Apply the user's Dock icon preference. `.accessory` hides the Dock icon
+    /// (menu-bar-only operation); `.regular` restores it. Called at launch and
+    /// whenever Settings toggles the preference. When hiding, the menu bar
+    /// icon is forced on so the app always stays reachable.
+    static func applyDockIconPolicy() {
+        let hide = UserDefaults.standard.bool(forKey: "hideDockIcon")
+        if hide {
+            UserDefaults.standard.set(true, forKey: "showMenuBarIcon")
+            NSApp.setActivationPolicy(.accessory)
+        } else {
+            NSApp.setActivationPolicy(.regular)
+        }
     }
 
     // MARK: - Emoji Picker Suppression
