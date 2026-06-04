@@ -49,6 +49,9 @@ class MiniRecorderWindowController: NSObject {
             panel.orderFrontRegardless()
         }
 
+        // Pause any playing media before the mic opens (opt-in, #63)
+        MediaPlaybackService.shared.pauseForRecording()
+
         // Trigger instant recording
         NotificationCenter.default.post(name: .recordingStartRequested, object: nil)
     }
@@ -58,12 +61,16 @@ class MiniRecorderWindowController: NSObject {
         // 1. Hide recorder immediately - REMOVED so it shows "Transcribing..."
         // panel?.orderOut(nil)
 
+        // Recording is over — resume media while transcription continues.
+        MediaPlaybackService.shared.resumeAfterRecording()
+
         // Keep focus unchanged while the hotkey is still being released.
         // Re-activation happens later during commit, right before auto-paste.
         NotificationCenter.default.post(name: .recordingStopRequested, object: nil)
     }
 
     func cancelRecording() {
+        MediaPlaybackService.shared.resumeAfterRecording()
         NotificationCenter.default.post(name: .recordingCancelRequested, object: nil)
     }
 
