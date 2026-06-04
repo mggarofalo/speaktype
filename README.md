@@ -10,7 +10,7 @@ SpeakType runs [OpenAI Whisper](https://github.com/openai/whisper) models entire
 
 While you hold the hotkey, audio is captured with AVFoundation and written to disk. On release, the full recording is transcribed and the result is pasted into the frontmost app by synthesizing ⌘V (which is why the app needs Accessibility permission). Transcripts are also kept in a local history you can browse from the main window.
 
-Models are downloaded once from Hugging Face (`argmaxinc/whisperkit-coreml`) and stored under `~/Documents/huggingface/`. Model sizes range from ~150 MB (`base`) to ~1.6 GB (`large-v3_turbo`).
+Models are downloaded once from Hugging Face (`argmaxinc/whisperkit-coreml`) and stored under `~/Library/Application Support/SpeakType/huggingface/`. Model sizes range from ~150 MB (`base`) to ~1.6 GB (`large-v3_turbo`). (Earlier versions stored models in `~/Documents/huggingface/`; the app migrates them automatically on launch.)
 
 ## Requirements
 

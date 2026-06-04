@@ -21,7 +21,7 @@ Signing constraints (load-bearing — do not "modernize" these):
 ## TCC / Permission Gotchas
 
 - If the signature identity ever changes, the Accessibility toggle in System Settings still **shows enabled** but `AXIsProcessTrusted` returns false → the app falls back to clipboard-only output instead of pasting. Fix: `tccutil reset Accessibility com.mggarofalo.speaktype`, relaunch, re-grant.
-- Models live in `~/Documents/huggingface/` (non-sandboxed documents dir). `~/Documents` is TCC-protected — terminal/agent processes typically cannot read it, and files copied out of it carry a `com.apple.macl` xattr that keeps blocking access until stripped (`xattr -rc`).
+- Models live in `~/Library/Application Support/SpeakType/huggingface/` (see `ModelStorage`). Upstream used `~/Documents/huggingface/`; `ModelStorage.migrateFromDocumentsIfNeeded()` moves a legacy install on launch. Don't reintroduce Documents paths — `~/Documents` is TCC-protected (terminal/agent processes can't read it, and files copied out of it carry a `com.apple.macl` xattr until stripped with `xattr -rc`).
 
 ## Compute Units (deliberate divergence from upstream)
 

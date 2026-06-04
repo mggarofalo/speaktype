@@ -23,20 +23,17 @@ class ModelDownloadService: ObservableObject {
     }
     
     private func setupCustomCache() {
-        // Use the standard Documents/huggingface location that WhisperKit expects
-        guard let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
-        
-        let huggingfaceCache = documentsDir.appendingPathComponent("huggingface")
-        
+        // Models live in Application Support (see ModelStorage). Move any
+        // legacy Documents/huggingface install first, then ensure the dir.
+        ModelStorage.migrateFromDocumentsIfNeeded()
+
         do {
-            try FileManager.default.createDirectory(at: huggingfaceCache, withIntermediateDirectories: true)
-            print("✅ Using standard HuggingFace cache at: \(huggingfaceCache.path)")
+            try FileManager.default.createDirectory(
+                at: ModelStorage.baseURL, withIntermediateDirectories: true)
+            print("✅ Using model cache at: \(ModelStorage.baseURL.path)")
         } catch {
-            print("⚠️ Failed to create huggingface directory: \(error)")
+            print("⚠️ Failed to create model cache directory: \(error)")
         }
-        
-        // Don't override HF_HUB_CACHE - let WhisperKit use its default behavior
-        // This ensures compatibility with the standard HuggingFace cache structure
     }
     
     // Check which models are already downloaded and update progress dictionary
@@ -50,9 +47,9 @@ class ModelDownloadService: ObservableObject {
         
         // Verify models actually exist on disk with proper size validation
         let fileManager = FileManager.default
-        if let documentsDir = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let whisperKitPath = documentsDir.appendingPathComponent("huggingface/models/argmaxinc/whisperkit-coreml")
-            
+        do {
+            let whisperKitPath = ModelStorage.whisperKitModelsURL
+
             if fileManager.fileExists(atPath: whisperKitPath.path) {
                 if let contents = try? fileManager.contentsOfDirectory(at: whisperKitPath, includingPropertiesForKeys: [.isDirectoryKey]) {
                     print("📁 Found \(contents.count) items in WhisperKit cache at \(whisperKitPath.path)")
@@ -144,11 +141,14 @@ class ModelDownloadService: ObservableObject {
                 // try await WhisperKit.download(variant: variant) { progress in ... }
                 
                 // likely: download(variant:progressCallback:) - 'from' usually has a default
-                let _ = try await WhisperKit.download(variant: variant, progressCallback: { progress in
-                    DispatchQueue.main.async {
-                        self.downloadProgress[variant] = progress.fractionCompleted
-                    }
-                })
+                let _ = try await WhisperKit.download(
+                    variant: variant,
+                    downloadBase: ModelStorage.baseURL,
+                    progressCallback: { progress in
+                        DispatchQueue.main.async {
+                            self.downloadProgress[variant] = progress.fractionCompleted
+                        }
+                    })
                 
                 // Check if task was cancelled before declaring success
                 if Task.isCancelled { return }
@@ -189,11 +189,14 @@ class ModelDownloadService: ObservableObject {
                      
                      // Retry download once
                      do {
-                         let _ = try await WhisperKit.download(variant: variant, progressCallback: { progress in
-                             DispatchQueue.main.async {
-                                 self.downloadProgress[variant] = progress.fractionCompleted
-                             }
-                         })
+                         let _ = try await WhisperKit.download(
+                             variant: variant,
+                             downloadBase: ModelStorage.baseURL,
+                             progressCallback: { progress in
+                                 DispatchQueue.main.async {
+                                     self.downloadProgress[variant] = progress.fractionCompleted
+                                 }
+                             })
                          
                          if Task.isCancelled { return }
                          
