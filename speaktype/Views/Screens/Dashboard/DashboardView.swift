@@ -11,10 +11,6 @@ struct DashboardView: View {
     private var whisperService: WhisperService { WhisperService.shared }
     @State private var leftColumnHeight: CGFloat = 0
 
-    // Trial & License
-    @EnvironmentObject var trialManager: TrialManager
-    @EnvironmentObject var licenseManager: LicenseManager
-
     @AppStorage("selectedModelVariant") private var selectedModel: String = "openai_whisper-base"
     @AppStorage("transcriptionLanguage") private var transcriptionLanguage: String = "auto"
     @State private var showFileImporter = false
@@ -72,11 +68,6 @@ struct DashboardView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                // Trial Banner - Hidden (logic kept for future use)
-                // if !licenseManager.isPro {
-                //     TrialBanner(status: trialManager.trialStatus)
-                // }
-
                 // Two horizontal boxes: Stats + Activity Chart
                 HStack(alignment: .top, spacing: 20) {
                     // Left: Stats Card

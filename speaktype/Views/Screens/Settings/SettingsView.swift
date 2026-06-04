@@ -105,10 +105,6 @@ struct GeneralSettingsTab: View {
     }
 
     @StateObject private var updateService = UpdateService.shared
-    @EnvironmentObject var licenseManager: LicenseManager
-
-    @State private var showLicenseSheet = false
-    @State private var showDeactivateAlert = false
 
     var body: some View {
         ScrollView {
@@ -337,45 +333,8 @@ struct GeneralSettingsTab: View {
                     }
                 }
 
-                // License - Hidden (logic kept for future use)
-                // SettingsSection {
-                //     SettingsSectionHeader(
-                //         icon: "key",
-                //         title: "License",
-                //         subtitle: licenseManager.isPro ? "Pro Active" : "Free Plan"
-                //     )
-                //
-                //     if licenseManager.isPro {
-                //         Button(action: { showDeactivateAlert = true }) {
-                //             Text("Deactivate License")
-                //                 .font(Typography.labelMedium)
-                //                 .frame(maxWidth: .infinity)
-                //         }
-                //         .buttonStyle(.stSecondary)
-                //     } else {
-                //         Button(action: { showLicenseSheet = true }) {
-                //             Text("Activate License")
-                //                 .font(Typography.labelMedium)
-                //                 .frame(maxWidth: .infinity)
-                //         }
-                //         .buttonStyle(.stPrimary)
-                //     }
-                // }
             }
             .padding(24)
-        }
-
-        .sheet(isPresented: $showLicenseSheet) {
-            LicenseView()
-                .environmentObject(licenseManager)
-        }
-        .alert("Deactivate License", isPresented: $showDeactivateAlert) {
-            Button("Cancel", role: .cancel) {}
-            Button("Deactivate", role: .destructive) {
-                Task { try? await licenseManager.deactivateLicense() }
-            }
-        } message: {
-            Text("Are you sure you want to deactivate your Pro license?")
         }
     }
 
