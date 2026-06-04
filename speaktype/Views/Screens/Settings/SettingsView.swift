@@ -90,6 +90,7 @@ struct GeneralSettingsTab: View {
     @AppStorage("selectedHotkey") private var selectedHotkey: HotkeyOption = .fn
     @AppStorage("recordingMode") private var recordingMode: Int = 0  // 0: Hold to record, 1: Toggle
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
+    @AppStorage("hideDockIcon") private var hideDockIcon: Bool = false
     @AppStorage("transcriptionLanguage") private var transcriptionLanguage: String = "auto"
     @AppStorage("recentTranscriptionLanguages") private var recentLanguagesString: String = ""
 
@@ -213,6 +214,28 @@ struct GeneralSettingsTab: View {
                             Spacer()
                             Toggle("", isOn: $showMenuBarIcon)
                                 .labelsHidden()
+                                .disabled(hideDockIcon)  // Must stay reachable somehow
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Hide Dock icon")
+                                    .font(Typography.bodyMedium)
+                                    .foregroundStyle(Color.textPrimary)
+                                Spacer()
+                                Toggle("", isOn: $hideDockIcon)
+                                    .labelsHidden()
+                                    .onChange(of: hideDockIcon) {
+                                        if hideDockIcon { showMenuBarIcon = true }
+                                        AppDelegate.applyDockIconPolicy()
+                                    }
+                            }
+
+                            if hideDockIcon {
+                                Text("The menu bar icon stays on so you can reach the app.")
+                                    .font(Typography.captionSmall)
+                                    .foregroundStyle(Color.textMuted)
+                            }
                         }
                     }
                 }
