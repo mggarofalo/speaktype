@@ -1,140 +1,98 @@
 # SpeakType
 
-<div align="center">
+Offline voice dictation for macOS. Hold a hotkey, speak, release — the transcribed text is pasted at your cursor in whatever app has focus.
 
-![SpeakType Icon](speaktype/Assets.xcassets/AppIcon.appiconset/icon_256x256.png)
+This is a maintained fork of [karansinghgit/speaktype](https://github.com/karansinghgit/speaktype), which deserves the credit for the original design and implementation. See [Changes in this fork](#changes-in-this-fork) for what differs.
 
-**Fast, Offline Voice-to-Text for macOS**
+## How it works
 
-![SpeakType app screenshot](image.png)
-[![Download](https://img.shields.io/badge/Download-SpeakType.dmg-blueviolet?logo=apple&logoColor=white)](https://github.com/karansinghgit/speaktype/releases/latest)
-[![Swift](https://img.shields.io/badge/Swift-5.9-orange?logo=swift)](https://swift.org)
-[![Platform](https://img.shields.io/badge/Platform-macOS%2013.0+-blue?logo=apple)](https://www.apple.com/macos/)
-[![License](https://img.shields.io/badge/License-MIT-red)](LICENSE)
+SpeakType runs [OpenAI Whisper](https://github.com/openai/whisper) models entirely on-device via [WhisperKit](https://github.com/argmaxinc/WhisperKit) (Core ML). No audio or text ever leaves your Mac — there is no server component, no account, and no telemetry.
 
-*Press a hotkey, speak, and instantly paste text anywhere on your Mac.*
+While you hold the hotkey, audio is captured with AVFoundation and written to disk. On release, the full recording is transcribed and the result is pasted into the frontmost app by synthesizing ⌘V (which is why the app needs Accessibility permission). Transcripts are also kept in a local history you can browse from the main window.
 
-</div>
+Models are downloaded once from Hugging Face (`argmaxinc/whisperkit-coreml`) and stored under `~/Documents/huggingface/`. Model sizes range from ~150 MB (`base`) to ~1.6 GB (`large-v3_turbo`).
 
----
+## Requirements
 
-## What is SpeakType?
-
-SpeakType is a **privacy-first, offline voice dictation tool** for macOS. Unlike online dictation services, everything runs **100% locally** using OpenAI's Whisper AI model via [WhisperKit](https://github.com/argmaxinc/WhisperKit). Support for Parakeet coming soon!
-
-- **Privacy First** - Zero data leaves your Mac
-- **Lightning Fast** - Optimized for Apple Silicon
-- **Works Everywhere** - Any app, any text field
-- **Open Source** - Audit every line of code yourself
-
----
+- macOS 14.0+ (the original upstream targets 13.0+)
+- Apple Silicon strongly recommended (inference runs on the GPU/Neural Engine)
+- 2 GB of free disk for the larger models
 
 ## Installation
 
-### Requirements
-
-- macOS 13.0+ (Ventura or newer)
-- Apple Silicon (M1+) recommended
-- 2GB available storage (for AI models)
-
-### Download
-
-**[Download Latest Release](https://github.com/karansinghgit/speaktype/releases/latest)**
-
-1. Download `SpeakType.dmg`
-2. Drag **SpeakType** to **Applications**
-3. Grant Microphone + Accessibility + Documents Folder permissions
-4. Download an AI model from Settings → AI Models
-
-Press `fn` to start dictating.
-
-### Build from Source
+Build from source:
 
 ```bash
-git clone https://github.com/karansinghgit/speaktype.git
+git clone https://github.com/mggarofalo/speaktype.git
 cd speaktype
 make build && make run
 ```
 
----
+On first launch:
 
-## Usage
+1. Grant **Microphone** and **Accessibility** permissions when prompted (Accessibility is required for the paste-at-cursor behavior; without it, transcriptions land on the clipboard instead)
+2. Download a model from **AI Models** in the main window
+3. Pick your input device under **Settings → Audio**
 
-1. Press hotkey (`fn` by default)
-2. Speak your text
-3. Release hotkey
-4. Text appears!
+Press and hold `fn` (default) to dictate. The hotkey and a toggle-instead-of-hold mode can be changed in Settings.
 
-**Tips:**
-- Speak naturally - Whisper handles accents well
-- Say punctuation: "comma", "period", "question mark"
-- Best results with 3-10 second clips
+## Usage notes
 
----
+- **Hold mode** (default): recording lasts exactly as long as you hold the hotkey
+- **Toggle mode**: tap to start, tap to stop
+- Press `Esc` while recording to cancel without pasting
+- Say punctuation out loud: "comma", "period", "question mark"
+- The first transcription after launch waits for the model to finish loading; subsequent dictations are near-instant (see below)
+
+### Model warm-up
+
+Loading a model takes time once per app launch — the model stays resident afterward. This fork routes inference to the GPU instead of the Neural Engine, which cut end-to-end load+transcribe time for `large-v3_turbo` from ~3 minutes to under a minute in testing (identical transcription output). Smaller models load in a few seconds. If you want the fastest possible readiness, `base` or `small` are nearly indistinguishable from `large` for clean English dictation.
+
+## Changes in this fork
+
+| Change | Branch | Upstream status |
+|---|---|---|
+| Fix: hold-to-talk with the Fn hotkey cancelled recording instantly (synthetic F19 from the emoji-picker suppression tripped the combo-cancel guard) | `fix/fn-hold-synthetic-f19-cancel` | [PR #77](https://github.com/karansinghgit/speaktype/pull/77) |
+| Feature: persist the selected audio input device across restarts | `feat/persist-audio-input-device` | [PR #78](https://github.com/karansinghgit/speaktype/pull/78) |
+| Perf: GPU compute units instead of Neural Engine — ~3.4× faster model warm-up, identical output | `feat/gpu-compute-units` | not yet submitted |
+
+All three are merged into `main` here.
 
 ## Development
 
 ```bash
-make build          # Build debug
-make run            # Run app
-make clean          # Clean build
+make build          # Debug build
+make run            # Build and launch
 make test           # Run tests
-make dmg            # Create DMG installer
+make lint           # SwiftLint
+make clean          # Remove build artifacts
 ```
 
-### Current Issues
-
-⚠️ When loading a model for the first time / switching to another model, there is a startup delay of 30-60 seconds. 
-
-So the first transcription will appear ultra slow, but it will go back to instantaneous dictation right after it's warmed up. 
-
-### Project Structure
+### Project structure
 
 ```
 speaktype/
-├── App/           # Entry point
-├── Views/         # SwiftUI interface
-├── Models/        # Data models
-├── Services/      # Core functionality
-├── Controllers/   # Window management
-└── Resources/     # Assets & config
+├── App/           # AppDelegate, hotkey monitoring
+├── Views/         # SwiftUI interface (dashboard, settings, recorder overlay)
+├── Models/        # Data models (hotkeys, AI models, history)
+├── Services/      # Audio capture, WhisperKit wrapper, model downloads, history
+├── Controllers/   # Recorder panel window management
+└── Resources/     # Assets, entitlements
 ```
 
-### Tech Stack
+### Tech stack
 
-- **Swift 5.9+** / SwiftUI + AppKit
-- **[WhisperKit](https://github.com/argmaxinc/WhisperKit)** - Local Whisper inference
-- **[KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts)** - Global hotkeys
-- **AVFoundation** - Audio capture
-
----
-
-## Contributing
-
-1. Fork & clone
-2. Create a branch: `git checkout -b feature/my-feature`
-3. Make changes and run `make lint`
-4. Submit a PR
-
----
+- Swift / SwiftUI + AppKit
+- [WhisperKit](https://github.com/argmaxinc/WhisperKit) — on-device Whisper inference (Core ML)
+- [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) — global hotkeys
+- AVFoundation — audio capture
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
-
----
+MIT — see [LICENSE](LICENSE).
 
 ## Credits
 
+- [karansinghgit/speaktype](https://github.com/karansinghgit/speaktype) — the original project this fork builds on
 - [WhisperKit](https://github.com/argmaxinc/WhisperKit) by Argmax
 - [OpenAI Whisper](https://github.com/openai/whisper)
-
----
-
-<div align="center">
-
-**Made with ❤️ for developers**
-
-*Privacy-first • Open Source *
-
-</div>
