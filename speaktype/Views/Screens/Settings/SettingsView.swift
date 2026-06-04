@@ -93,6 +93,7 @@ struct GeneralSettingsTab: View {
     @AppStorage("hideDockIcon") private var hideDockIcon: Bool = false
     @AppStorage("removeFillerWords") private var removeFillerWords: Bool = false
     @AppStorage("pauseMediaDuringRecording") private var pauseMediaDuringRecording: Bool = false
+    @AppStorage("customVocabulary") private var customVocabulary: String = VocabularyDefaults.seed
     @AppStorage("transcriptionLanguage") private var transcriptionLanguage: String = "auto"
     @AppStorage("recentTranscriptionLanguages") private var recentLanguagesString: String = ""
 
@@ -339,6 +340,30 @@ struct GeneralSettingsTab: View {
                         .font(Typography.captionSmall)
                         .foregroundStyle(Color.textMuted)
                         .padding(.top, 4)
+                }
+
+                // Custom Vocabulary
+                SettingsSection {
+                    SettingsSectionHeader(
+                        icon: "text.book.closed", title: "Custom Vocabulary",
+                        subtitle: "Names and terms the transcriber should know")
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextEditor(text: $customVocabulary)
+                            .font(Typography.bodySmall)
+                            .foregroundStyle(Color.textPrimary)
+                            .scrollContentBackground(.hidden)
+                            .padding(8)
+                            .frame(minHeight: 90, maxHeight: 140)
+                            .background(Color.bgHover)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                        Text(
+                            "Comma- or newline-separated. Biases transcription toward these spellings — useful for product names, coworkers, and jargon. Applies to the next dictation; leave empty to disable."
+                        )
+                        .font(Typography.captionSmall)
+                        .foregroundStyle(Color.textMuted)
+                    }
                 }
 
                 // Updates
