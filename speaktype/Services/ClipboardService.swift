@@ -4,33 +4,20 @@ import Cocoa
 class ClipboardService {
     static let shared = ClipboardService()
 
-    // Dependency injection for license checking
-    private var licenseManager: LicenseManager {
-        return LicenseManager.shared
-    }
-
     private init() {}
 
-    // Copy text to system clipboard with optional promotional wrapper
+    // Copy text to system clipboard
     func copy(text: String) {
-        let finalText = wrapTextIfNeeded(text)
-
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(finalText, forType: .string)
+        pasteboard.setString(text, forType: .string)
 
         // Verify write
-        if let check = pasteboard.string(forType: .string), check == finalText {
+        if let check = pasteboard.string(forType: .string), check == text {
             print("✅ Clipboard Write Verified: '\(check.prefix(20))...'")
         } else {
             print("❌ Clipboard Write FAILED!")
         }
-    }
-
-    // Wrap text with promotional message for free users
-    private func wrapTextIfNeeded(_ text: String) -> String {
-        // License check disabled - always allow unwrapped text
-        return text
     }
 
     // Paste content (Simulate Cmd+V)
