@@ -1,5 +1,6 @@
 import CoreML
 import Foundation
+import Tokenizers
 import WhisperKit
 
 @Observable
@@ -225,7 +226,27 @@ class WhisperService {
         var options = DecodingOptions()
         options.task = .transcribe
         options.language = (language == "auto") ? nil : language
+        options.promptTokens = vocabularyPromptTokens()
         return options
+    }
+
+    /// Whisper "initial prompt" conditioning: the user's custom vocabulary is
+    /// encoded as previous-context tokens, biasing the decoder toward those
+    /// spellings (proper nouns, product names, coworker names). WhisperKit
+    /// trims the prompt to the max context and strips special tokens itself.
+    private func vocabularyPromptTokens() -> [Int]? {
+        let vocabulary = UserDefaults.standard.string(forKey: "customVocabulary") ?? ""
+        let terms = vocabulary
+            .components(separatedBy: CharacterSet(charactersIn: ",\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !terms.isEmpty, let tokenizer = pipe?.tokenizer else { return nil }
+
+        // Phrased as natural prior context — biases better than a bare list.
+        let prompt = " Glossary: " + terms.joined(separator: ", ") + "."
+        let tokens = tokenizer.encode(text: prompt)
+        return tokens.isEmpty ? nil : tokens
     }
 
     /// Filler words removed when the "Remove filler words" setting is on.

@@ -16,6 +16,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var localKeyDownMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        VocabularyDefaults.register()
         Self.applyDockIconPolicy()
 
         miniRecorderController = MiniRecorderWindowController()
