@@ -146,6 +146,7 @@ struct GeneralSettingsTab: View {
                                 ForEach(HotkeyOption.allCases) { option in
                                     Button(option.displayName) {
                                         selectedHotkey = option
+                                        AppDelegate.syncChordHotkeyEnabled()
                                     }
                                 }
                             } label: {
@@ -163,6 +164,16 @@ struct GeneralSettingsTab: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
                             }
                             .menuStyle(.borderlessButton)
+                        }
+
+                        if selectedHotkey == .chord {
+                            HStack {
+                                Text("Chord")
+                                    .font(Typography.bodyMedium)
+                                    .foregroundStyle(Color.textPrimary)
+                                Spacer()
+                                KeyboardShortcuts.Recorder("", name: .dictationChord)
+                            }
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
