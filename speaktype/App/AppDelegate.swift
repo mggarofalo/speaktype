@@ -90,6 +90,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.handleModifierComboEvent(event)
             return event
         }
+
+        setupChordHotkeyListeners()
+    }
+
+    /// Chord hotkeys (e.g. ⌃V) are handled by the KeyboardShortcuts package:
+    /// Carbon registration both delivers keyDown/keyUp and consumes the chord
+    /// so it never reaches the focused app. Only enabled while the selected
+    /// hotkey is `.chord`, otherwise the recorded chord would be swallowed
+    /// system-wide for no reason.
+    private func setupChordHotkeyListeners() {
+        KeyboardShortcuts.onKeyDown(for: .dictationChord) { [weak self] in
+            guard let self, self.getSelectedHotkey() == .chord else { return }
+            self.handleHotkeyStateChange(isPressed: true)
+        }
+        KeyboardShortcuts.onKeyUp(for: .dictationChord) { [weak self] in
+            guard let self, self.getSelectedHotkey() == .chord else { return }
+            self.handleHotkeyStateChange(isPressed: false)
+        }
+        syncChordHotkeyEnabled()
+    }
+
+    /// Keep the Carbon registration in sync with the selected hotkey. Called at
+    /// launch and whenever Settings changes the hotkey selection.
+    static func syncChordHotkeyEnabled() {
+        let isChord = UserDefaults.standard.string(forKey: "selectedHotkey") == HotkeyOption.chord.rawValue
+        if isChord {
+            KeyboardShortcuts.enable(.dictationChord)
+        } else {
+            KeyboardShortcuts.disable(.dictationChord)
+        }
+    }
+
+    private func syncChordHotkeyEnabled() {
+        Self.syncChordHotkeyEnabled()
     }
 
     private func setupSuppressingHotkeyEventTap() {
@@ -160,6 +194,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleHotkeyEvent(_ event: NSEvent) {
         let currentHotkey = getSelectedHotkey()
+        guard currentHotkey != .chord else { return }  // Chords are handled by KeyboardShortcuts
         guard event.keyCode == currentHotkey.keyCode else { return }
 
         let isPressed = event.modifierFlags.contains(currentHotkey.modifierFlag)
@@ -199,6 +234,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleModifierComboEvent(_ event: NSEvent) {
         guard isHotkeyPressed else { return }
+        // Combo-cancel exists for modifier-only hotkeys (#43): the user pressed
+        // e.g. ⌘C while their ⌘ hotkey was recording. A chord hotkey already
+        // includes a non-modifier key, so this heuristic does not apply.
+        guard getSelectedHotkey() != .chord else { return }
         guard UserDefaults.standard.integer(forKey: "recordingMode") == 0 else { return }
         guard !event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else { return }
         guard event.keyCode != getSelectedHotkey().keyCode else { return }
