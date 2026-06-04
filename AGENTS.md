@@ -20,7 +20,7 @@ Signing constraints (load-bearing — do not "modernize" these):
 
 ## TCC / Permission Gotchas
 
-- If the signature identity ever changes, the Accessibility toggle in System Settings still **shows enabled** but `AXIsProcessTrusted` returns false → the app falls back to clipboard-only output instead of pasting. Fix: `tccutil reset Accessibility com.2048labs.speaktype`, relaunch, re-grant.
+- If the signature identity ever changes, the Accessibility toggle in System Settings still **shows enabled** but `AXIsProcessTrusted` returns false → the app falls back to clipboard-only output instead of pasting. Fix: `tccutil reset Accessibility com.mggarofalo.speaktype`, relaunch, re-grant.
 - Models live in `~/Documents/huggingface/` (non-sandboxed documents dir). `~/Documents` is TCC-protected — terminal/agent processes typically cannot read it, and files copied out of it carry a `com.apple.macl` xattr that keeps blocking access until stripped (`xattr -rc`).
 
 ## Compute Units (deliberate divergence from upstream)
@@ -35,4 +35,4 @@ Signing constraints (load-bearing — do not "modernize" these):
 ## Debugging
 
 - `MiniRecorderView` writes a timestamped flow log to `/tmp/speaktype_debug.log` (hotkey → record → transcribe) — check it before instrumenting anything.
-- Unified logging subsystem is `com.2048labs.speaktype` (`make logs` streams it).
+- Unified logging subsystem is `com.mggarofalo.speaktype` (`make logs` streams it).
