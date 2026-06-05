@@ -86,7 +86,9 @@ struct SettingsTabButton: View {
 
 struct GeneralSettingsTab: View {
     @AppStorage("appTheme") private var appTheme: AppTheme = .system
-    @AppStorage("autoUpdate") private var autoUpdate = true
+    // Default false to match AppDelegate's UserDefaults read — private by default,
+    // no network traffic until the user explicitly opts in to update checks.
+    @AppStorage("autoUpdate") private var autoUpdate = false
     @AppStorage("selectedHotkey") private var selectedHotkey: HotkeyOption = .fn
     @AppStorage("recordingMode") private var recordingMode: Int = 0  // 0: Hold to record, 1: Toggle
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
