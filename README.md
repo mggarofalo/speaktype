@@ -50,13 +50,32 @@ Loading a model takes time once per app launch — the model stays resident afte
 
 ## Changes in this fork
 
-| Change | Branch | Upstream status |
-|---|---|---|
-| Fix: hold-to-talk with the Fn hotkey cancelled recording instantly (synthetic F19 from the emoji-picker suppression tripped the combo-cancel guard) | `fix/fn-hold-synthetic-f19-cancel` | [PR #77](https://github.com/karansinghgit/speaktype/pull/77) |
-| Feature: persist the selected audio input device across restarts | `feat/persist-audio-input-device` | [PR #78](https://github.com/karansinghgit/speaktype/pull/78) |
-| Perf: GPU compute units instead of Neural Engine — ~3.4× faster model warm-up, identical output | `feat/gpu-compute-units` | not yet submitted |
+User-facing changes since the fork point (upstream v1.0.29):
 
-All three are merged into `main` here.
+**New features**
+
+- Custom vocabulary — bias transcription toward names and jargon you specify
+- Optional filler-word removal ("um", "uh", …) from transcriptions
+- Optionally pause Music/Spotify while recording
+- Menu-bar-only mode (hide the Dock icon)
+- Modifier+key chords (e.g. ⌥⌘D) as dictation hotkeys, not just single keys
+- The selected audio input device persists across restarts ([upstream PR #78](https://github.com/karansinghgit/speaktype/pull/78))
+
+**Fixes**
+
+- Hold-to-talk with the Fn hotkey no longer cancels recording instantly ([upstream PR #77](https://github.com/karansinghgit/speaktype/pull/77))
+- Your clipboard contents are preserved across the dictation auto-paste
+- Dictating while the app is hidden no longer restores the main window
+
+**Performance**
+
+- Inference runs on the GPU instead of the Neural Engine — ~3.4× faster model warm-up, identical output
+
+**Behavior changes**
+
+- All trial/license/Pro-upsell machinery removed — everything is free
+- AI models are stored under `~/Library/Application Support/SpeakType/` instead of `~/Documents/` (existing models migrate automatically)
+- The in-app updater points at this fork's releases
 
 ## Development
 
