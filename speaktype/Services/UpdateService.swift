@@ -2,6 +2,15 @@ import AppKit
 import Combine
 import Foundation
 
+/// Side-effect boundary for fetching the latest release. The production
+/// conformance wraps the GitHub releases API; tests substitute a fake that
+/// returns canned releases (or throws) so the update-decision flow can be
+/// exercised without network access.
+protocol ReleaseFetching {
+    /// Fetch the latest release, or throw if the request/decoding fails.
+    func fetchLatestRelease() async throws -> GitHubRelease
+}
+
 /// Service to check for app updates and manage update preferences
 class UpdateService: ObservableObject {
     static let shared = UpdateService()
@@ -26,11 +35,48 @@ class UpdateService: ObservableObject {
     private let autoUpdateKey = "autoUpdate"
     private let lastReminderDateKey = "lastUpdateReminderDate"
 
-    private init() {
+    private let releaseFetcher: ReleaseFetching
+
+    init(releaseFetcher: ReleaseFetching = GitHubReleaseFetcher()) {
+        self.releaseFetcher = releaseFetcher
         loadLastCheckDate()
     }
 
+    // The project defaults to MainActor isolation, which would give this type a
+    // main-actor-isolated deinit. There is no main-actor state to tear down, and
+    // the back-deployed main-actor deinit path crashes when a non-`shared`
+    // instance is released under test. A nonisolated deinit avoids that hop.
+    nonisolated deinit {}
+
     // MARK: - Update Checking
+
+    /// Outcome of evaluating a fetched release against the current build and
+    /// skip preference. `.none` means nothing to surface; `.surface` carries the
+    /// version the UI should present.
+    enum UpdateDecision: Equatable {
+        case none
+        case surface(AppVersion)
+    }
+
+    /// Pure decision: given a fetched release version, the current build, the
+    /// skipped version (if any), and whether the check was silent, decide what to
+    /// surface. A newer version surfaces unless it was skipped during a silent
+    /// (background) check — an explicit (non-silent) check always surfaces a
+    /// newer version even if previously skipped.
+    static func decideUpdate(
+        releaseVersion: AppVersion,
+        currentVersion: String,
+        skippedVersion: String?,
+        silent: Bool
+    ) -> UpdateDecision {
+        guard AppVersion.isNewerVersion(releaseVersion.version, than: currentVersion) else {
+            return .none
+        }
+        if silent && skippedVersion == releaseVersion.version {
+            return .none
+        }
+        return .surface(releaseVersion)
+    }
 
     /// Check for updates from server
     func checkForUpdates(silent: Bool = false) async {
@@ -39,25 +85,24 @@ class UpdateService: ObservableObject {
         await MainActor.run { isCheckingForUpdates = true }
 
         do {
-            // Points at this fork, not upstream — an upstream release must never
-            // replace the locally patched build. 404 (no releases) is harmless.
-            let url = URL(
-                string: "https://api.github.com/repos/mggarofalo/speaktype/releases/latest")!
-            var request = URLRequest(url: url)
-            request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
-
-            let (data, _) = try await URLSession.shared.data(for: request)
-            let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+            let release = try await releaseFetcher.fetchLatestRelease()
             let releaseVersion = AppVersion(from: release)
             let currentVersion = AppVersion.currentVersion
+            let skipped = UserDefaults.standard.string(forKey: skippedVersionKey)
+
+            let decision = Self.decideUpdate(
+                releaseVersion: releaseVersion,
+                currentVersion: currentVersion,
+                skippedVersion: skipped,
+                silent: silent
+            )
 
             await MainActor.run {
-                if AppVersion.isNewerVersion(releaseVersion.version, than: currentVersion) {
-                    if !silent || !self.isVersionSkipped(releaseVersion.version) {
-                        self.availableUpdate = releaseVersion
-                        self.showUpdateWindowPublisher.send(releaseVersion)
-                    }
-                } else {
+                switch decision {
+                case .surface(let version):
+                    self.availableUpdate = version
+                    self.showUpdateWindowPublisher.send(version)
+                case .none:
                     self.availableUpdate = nil
                 }
                 self.isCheckingForUpdates = false
@@ -89,10 +134,6 @@ class UpdateService: ObservableObject {
     func skipVersion(_ version: String) {
         UserDefaults.standard.set(version, forKey: skippedVersionKey)
         availableUpdate = nil
-    }
-
-    private func isVersionSkipped(_ version: String) -> Bool {
-        UserDefaults.standard.string(forKey: skippedVersionKey) == version
     }
 
     func markReminderShown() {
@@ -369,6 +410,23 @@ class UpdateService: ObservableObject {
 
     private static func byteString(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
+// MARK: - Release Fetching
+
+/// Production conformance: the original GitHub releases-API call, verbatim.
+struct GitHubReleaseFetcher: ReleaseFetching {
+    func fetchLatestRelease() async throws -> GitHubRelease {
+        // Points at this fork, not upstream — an upstream release must never
+        // replace the locally patched build. 404 (no releases) is harmless.
+        let url = URL(
+            string: "https://api.github.com/repos/mggarofalo/speaktype/releases/latest")!
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+
+        let (data, _) = try await URLSession.shared.data(for: request)
+        return try JSONDecoder().decode(GitHubRelease.self, from: data)
     }
 }
 
