@@ -223,10 +223,23 @@ class WhisperService {
     }
 
     private func decodingOptions(for language: String) -> DecodingOptions {
+        Self.decodingOptions(language: language, promptTokens: vocabularyPromptTokens())
+    }
+
+    static func decodingOptions(language: String, promptTokens: [Int]?) -> DecodingOptions {
         var options = DecodingOptions()
         options.task = .transcribe
         options.language = (language == "auto") ? nil : language
-        options.promptTokens = vocabularyPromptTokens()
+        if let promptTokens {
+            options.promptTokens = promptTokens
+            // Prompt conditioning lowers the decoder's confidence in the first
+            // sampled token, tripping WhisperKit's firstTokenLogProbThreshold
+            // (-1.5 default), which aborts the window with zero tokens — every
+            // dictation came back "No speech detected". Verified against a real
+            // recording: identical audio transcribes correctly with the
+            // threshold disabled and returns empty with it on.
+            options.firstTokenLogProbThreshold = nil
+        }
         return options
     }
 
@@ -235,18 +248,28 @@ class WhisperService {
     /// spellings (proper nouns, product names, coworker names). WhisperKit
     /// trims the prompt to the max context and strips special tokens itself.
     private func vocabularyPromptTokens() -> [Int]? {
-        let vocabulary = UserDefaults.standard.string(forKey: "customVocabulary") ?? ""
-        let terms = vocabulary
+        guard
+            let prompt = Self.vocabularyPrompt(
+                from: UserDefaults.standard.string(forKey: "customVocabulary") ?? ""),
+            let tokenizer = pipe?.tokenizer
+        else { return nil }
+
+        let tokens = tokenizer.encode(text: prompt)
+        return tokens.isEmpty ? nil : tokens
+    }
+
+    /// Builds the glossary prompt string from the raw vocabulary setting
+    /// (comma- or newline-separated terms). Returns nil when no terms remain.
+    static func vocabularyPrompt(from rawVocabulary: String) -> String? {
+        let terms = rawVocabulary
             .components(separatedBy: CharacterSet(charactersIn: ",\n"))
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
-        guard !terms.isEmpty, let tokenizer = pipe?.tokenizer else { return nil }
+        guard !terms.isEmpty else { return nil }
 
         // Phrased as natural prior context — biases better than a bare list.
-        let prompt = " Glossary: " + terms.joined(separator: ", ") + "."
-        let tokens = tokenizer.encode(text: prompt)
-        return tokens.isEmpty ? nil : tokens
+        return " Glossary: " + terms.joined(separator: ", ") + "."
     }
 
     /// Filler words removed when the "Remove filler words" setting is on.

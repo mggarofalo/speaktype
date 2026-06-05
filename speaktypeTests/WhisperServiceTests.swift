@@ -1,3 +1,4 @@
+import WhisperKit
 import XCTest
 @testable import speaktype
 
@@ -53,5 +54,44 @@ final class WhisperServiceTests: XCTestCase {
         )
 
         XCTAssertEqual(normalized, "")
+    }
+
+    // MARK: - Decoding options
+
+    func testDecodingOptionsWithoutPromptKeepsFirstTokenThreshold() {
+        let options = WhisperService.decodingOptions(language: "auto", promptTokens: nil)
+
+        XCTAssertNil(options.promptTokens)
+        XCTAssertNotNil(options.firstTokenLogProbThreshold)
+    }
+
+    // Regression: with vocabulary prompt tokens present, WhisperKit's
+    // firstTokenLogProbThreshold (-1.5 default) aborts every window with zero
+    // tokens, so all dictations surfaced as "No speech detected". The
+    // threshold must be disabled whenever a prompt conditions the decoder.
+    func testDecodingOptionsWithPromptDisablesFirstTokenThreshold() {
+        let options = WhisperService.decodingOptions(language: "auto", promptTokens: [1, 2, 3])
+
+        XCTAssertEqual(options.promptTokens, [1, 2, 3])
+        XCTAssertNil(options.firstTokenLogProbThreshold)
+    }
+
+    func testDecodingOptionsLanguageMapping() {
+        XCTAssertNil(WhisperService.decodingOptions(language: "auto", promptTokens: nil).language)
+        XCTAssertEqual(
+            WhisperService.decodingOptions(language: "en", promptTokens: nil).language, "en")
+    }
+
+    // MARK: - Vocabulary prompt construction
+
+    func testVocabularyPromptNilForEmptyOrBlankInput() {
+        XCTAssertNil(WhisperService.vocabularyPrompt(from: ""))
+        XCTAssertNil(WhisperService.vocabularyPrompt(from: " , \n , "))
+    }
+
+    func testVocabularyPromptJoinsCommaAndNewlineSeparatedTerms() {
+        let prompt = WhisperService.vocabularyPrompt(from: "Jira, Blazor\n WhisperKit ")
+
+        XCTAssertEqual(prompt, " Glossary: Jira, Blazor, WhisperKit.")
     }
 }
