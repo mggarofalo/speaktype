@@ -204,5 +204,15 @@ class HistoryService: ObservableObject {
         UserDefaults.standard.removeObject(forKey: saveKey)
         UserDefaults.standard.removeObject(forKey: statsSaveKey)
     }
+
+    /// Re-runs the same load + stats-migration path that `init` performs, but
+    /// against the current UserDefaults contents. Exposed so tests can exercise
+    /// `migrateStatsIfNeeded` (otherwise only reachable from the private init).
+    func reloadFromPersistenceForTesting() {
+        items = []
+        statsEntries = []
+        loadStats()
+        loadHistory()
+    }
 #endif
 }
