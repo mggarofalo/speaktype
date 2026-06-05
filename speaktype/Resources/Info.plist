@@ -26,7 +26,7 @@
     <array>
         <dict>
             <key>CFBundleURLName</key>
-            <string>com.karansinghgit.speaktype</string>
+            <string>com.mggarofalo.speaktype</string>
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>speaktype</string>
