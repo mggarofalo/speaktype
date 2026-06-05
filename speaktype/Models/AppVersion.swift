@@ -87,7 +87,7 @@ extension AppVersion {
             "Redesigned Power Mode & Enhancement UI",
             "Minor bug fixes and improvements",
         ],
-        downloadURL: "https://speaktype.app/download/latest",
+        downloadURL: "https://github.com/mggarofalo/speaktype/releases/latest",
         isRequired: false,
         releaseDate: Date()
     )
