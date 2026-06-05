@@ -1,6 +1,6 @@
 # Makefile for SpeakType
 
-.PHONY: help build clean clean-dev test lint format run run-dev run-release setup logs logs-live logs-errors logs-export install uninstall reinstall
+.PHONY: help build clean clean-dev test coverage lint format run run-dev run-release setup logs logs-live logs-errors logs-export install uninstall reinstall
 
 # Default target
 help:
@@ -22,6 +22,7 @@ help:
 	@echo "  make test          - Run all tests"
 	@echo "  make test-unit     - Run unit tests only"
 	@echo "  make test-ui       - Run UI tests only"
+	@echo "  make coverage      - Run unit tests with code coverage report"
 	@echo ""
 	@echo "Distribution:"
 	@echo "  make create-release - 🔨 Bump version, build, sign, notarize → dist/*.dmg"
@@ -101,6 +102,24 @@ test-unit:
 test-ui:
 	@echo "Running UI tests..."
 	xcodebuild test -scheme speaktype -destination 'platform=macOS' -only-testing:speaktypeUITests
+
+# Run unit tests with code coverage and print a per-file report for the app target
+COVERAGE_RESULT := /tmp/speaktype-coverage.xcresult
+coverage:
+	@echo "Running unit tests with coverage..."
+	@rm -rf $(COVERAGE_RESULT)
+	xcodebuild test -scheme speaktype -destination 'platform=macOS' \
+		-enableCodeCoverage YES -resultBundlePath $(COVERAGE_RESULT) \
+		-only-testing:speaktypeTests
+	@echo ""
+	@echo "=== Coverage by target ==="
+	@xcrun xccov view --report --only-targets $(COVERAGE_RESULT)
+	@echo ""
+	@echo "=== speaktype.app per-file (Views excluded; sorted ascending) ==="
+	@xcrun xccov view --report --files-for-target speaktype.app $(COVERAGE_RESULT) \
+		| grep '\.swift ' | grep -v '/Views/' \
+		| awk '{file=$$2; sub(".*/", "", file); printf "%8s %14s  %s\n", $$(NF-1), $$NF, file}' \
+		| sort -n
 
 # Run SwiftLint
 lint:
