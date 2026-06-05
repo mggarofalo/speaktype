@@ -8,7 +8,7 @@ class AudioRecordingService: NSObject, ObservableObject {
 
     // Chunk publisher: emits the URL of each completed ~4-second audio chunk while recording
     let chunkPublisher = PassthroughSubject<URL, Never>()
-    private static let chunkDuration: TimeInterval = 4.0
+    static let chunkDuration: TimeInterval = 4.0
 
     @Published var isRecording = false
     @Published var audioLevel: Float = 0.0
@@ -24,7 +24,7 @@ class AudioRecordingService: NSObject, ObservableObject {
         }
     }
 
-    private static let selectedDeviceDefaultsKey = "selectedAudioDeviceId"
+    static let selectedDeviceDefaultsKey = "selectedAudioDeviceId"
 
     private var captureSession: AVCaptureSession?
     private var audioOutput: AVCaptureAudioDataOutput?
@@ -47,7 +47,10 @@ class AudioRecordingService: NSObject, ObservableObject {
 
     private let audioQueue = DispatchQueue(label: "com.speaktype.audioQueue")
 
-    private func validatedAudioFileURL(
+    /// Validates a finished recording/chunk file: the writer (when provided) must have
+    /// completed, the file must exist on disk, and AVAudioFile must be able to open it.
+    /// Static and writer-optional so the file checks are unit-testable with temp files.
+    static func validatedAudioFileURL(
         at url: URL,
         writer: AVAssetWriter?,
         label: String
@@ -141,6 +144,21 @@ class AudioRecordingService: NSObject, ObservableObject {
         fetchAvailableDevices()
     }
 
+    /// Virtual devices (e.g. Microsoft Teams Audio) are hidden from selection.
+    static func isSelectableDevice(named name: String) -> Bool {
+        !name.localizedCaseInsensitiveContains("Microsoft Teams")
+    }
+
+    /// Pure selection policy: keep the persisted device while it is still connected,
+    /// otherwise fall back to the first selectable device; nil when none remain.
+    static func resolveSelection(devices: [AudioDevice], persistedId: String?) -> String? {
+        let selectable = devices.filter { isSelectableDevice(named: $0.name) }
+        if let persistedId, selectable.contains(where: { $0.id == persistedId }) {
+            return persistedId
+        }
+        return selectable.first?.id
+    }
+
     func fetchAvailableDevices() {
         let discoverySession = AVCaptureDevice.DiscoverySession(
             deviceTypes: [.microphone],
@@ -149,15 +167,21 @@ class AudioRecordingService: NSObject, ObservableObject {
         )
         DispatchQueue.main.async {
             self.availableDevices = discoverySession.devices.filter { device in
-                !device.localizedName.localizedCaseInsensitiveContains("Microsoft Teams")
+                Self.isSelectableDevice(named: device.localizedName)
             }
             // Fall back to the first device when nothing is selected or the
             // selected (possibly persisted) device is no longer connected.
-            let selectionIsAvailable = self.availableDevices.contains {
-                $0.uniqueID == self.selectedDeviceId
-            }
-            if !selectionIsAvailable, let first = self.availableDevices.first {
-                self.selectedDeviceId = first.uniqueID
+            // Only assign on an actual change so didSet (session rebuild +
+            // persistence) does not fire redundantly — matching the previous
+            // "assign only when unavailable" behavior.
+            let resolved = Self.resolveSelection(
+                devices: self.availableDevices.map {
+                    AudioDevice(id: $0.uniqueID, name: $0.localizedName)
+                },
+                persistedId: self.selectedDeviceId
+            )
+            if let resolved, resolved != self.selectedDeviceId {
+                self.selectedDeviceId = resolved
             }
         }
     }
@@ -322,7 +346,7 @@ class AudioRecordingService: NSObject, ObservableObject {
                         self.audioQueue.async {
                             if discardOutput {
                                 try? FileManager.default.removeItem(at: lastChunkURL)
-                            } else if let validChunkURL = self.validatedAudioFileURL(
+                            } else if let validChunkURL = Self.validatedAudioFileURL(
                                 at: lastChunkURL,
                                 writer: lastChunkWriter,
                                 label: "Final chunk"
@@ -350,7 +374,7 @@ class AudioRecordingService: NSObject, ObservableObject {
                             if discardOutput {
                                 try? FileManager.default.removeItem(at: url)
                             } else {
-                                finalizedRecordingURL = self.validatedAudioFileURL(
+                                finalizedRecordingURL = Self.validatedAudioFileURL(
                                     at: url,
                                     writer: writer,
                                     label: "Recording"
@@ -487,12 +511,29 @@ extension AudioRecordingService: AVCaptureAudioDataOutputSampleBufferDelegate {
         }
 
         // Rotate chunk after chunkDuration seconds
-        guard !isRotatingChunk,
-            let start = chunkStartTime,
-            Date().timeIntervalSince(start) >= Self.chunkDuration
+        guard
+            Self.shouldRotateChunk(
+                chunkStartTime: chunkStartTime,
+                now: Date(),
+                isRotatingChunk: isRotatingChunk
+            )
         else { return }
 
         rotateChunk(nextStartPTS: pts)
+    }
+
+    /// Pure rotation decision: rotate once the in-flight chunk has been open for
+    /// `chunkDuration` or longer. A nil `chunkStartTime` means no chunk session has
+    /// started yet (the writer is created lazily on the first buffer), so there is
+    /// nothing to rotate. `isRotatingChunk` is the re-entrancy guard.
+    static func shouldRotateChunk(
+        chunkStartTime: Date?,
+        now: Date,
+        isRotatingChunk: Bool,
+        chunkDuration: TimeInterval = AudioRecordingService.chunkDuration
+    ) -> Bool {
+        guard !isRotatingChunk, let start = chunkStartTime else { return false }
+        return now.timeIntervalSince(start) >= chunkDuration
     }
 
     private func startNewChunkWriter(startingAt pts: CMTime) {
@@ -583,18 +624,73 @@ extension AudioRecordingService: AVCaptureAudioDataOutputSampleBufferDelegate {
         guard bytesPerFrame > 0 else { return }
 
         let frameCount = Int(audioBufferList.mBuffers.mDataByteSize) / bytesPerFrame
+
+        let samples: SampleData
+        if (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0 {
+            // Float32 Processing (Standard on Mac)
+            let actualData = data.assumingMemoryBound(to: Float.self)
+            samples = .float32(Array(UnsafeBufferPointer(start: actualData, count: frameCount)))
+        } else if asbd.mBitsPerChannel == 16 {
+            // Int16 Processing (Fallback)
+            let actualData = data.assumingMemoryBound(to: Int16.self)
+            samples = .int16(Array(UnsafeBufferPointer(start: actualData, count: frameCount)))
+        } else if asbd.mBitsPerChannel == 32 {
+            // Int32 Processing
+            let actualData = data.assumingMemoryBound(to: Int32.self)
+            samples = .int32(Array(UnsafeBufferPointer(start: actualData, count: frameCount)))
+        } else {
+            samples = .unsupported(frameCount: frameCount)
+        }
+
+        guard let metrics = Self.audioMetrics(samples: samples, sampleRate: asbd.mSampleRate)
+        else { return }
+
+        DispatchQueue.main.async {
+            self.audioLevel = metrics.level
+            self.audioFrequency = metrics.frequency
+        }
+    }
+}
+
+// MARK: - Pure DSP
+
+extension AudioRecordingService {
+    /// Raw audio samples lifted out of a CMSampleBuffer, one case per PCM layout the
+    /// capture pipeline handles. `.unsupported` carries only the frame count so unknown
+    /// formats (e.g. 24-bit int) keep the original behavior: zero metrics published.
+    enum SampleData {
+        case float32([Float])
+        case int16([Int16])
+        case int32([Int32])
+        case unsupported(frameCount: Int)
+    }
+
+    /// Pure level/pitch math behind `processAudioLevel(from:)`: stride-4 subsampling,
+    /// RMS → dB (0.0001 floor), -50…0 dB clamp + linear normalize, a <0.01 signal gate
+    /// that also zeroes zero-crossings, and ZCR × 5.0 clamped to 0…1 as a pitch proxy.
+    /// Returns nil when there are fewer samples than one stride step (no UI update).
+    static func audioMetrics(
+        samples: SampleData,
+        sampleRate: Double
+    ) -> (level: Float, frequency: Float)? {
         let stride = 4
+        let frameCount: Int
+        switch samples {
+        case .float32(let data): frameCount = data.count
+        case .int16(let data): frameCount = data.count
+        case .int32(let data): frameCount = data.count
+        case .unsupported(let count): frameCount = count
+        }
         let samplesToRead = frameCount / stride
 
-        guard samplesToRead > 0 else { return }
+        guard samplesToRead > 0 else { return nil }
 
         var sumSquares: Float = 0.0
         var zeroCrossings: Int = 0
         var previousSample: Float = 0.0
 
-        if (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0 {
-            // Float32 Processing (Standard on Mac)
-            let actualData = data.assumingMemoryBound(to: Float.self)
+        switch samples {
+        case .float32(let actualData):
             previousSample = actualData[0]
 
             for i in 0..<samplesToRead {
@@ -607,36 +703,34 @@ extension AudioRecordingService: AVCaptureAudioDataOutputSampleBufferDelegate {
                 }
                 previousSample = sample
             }
-        } else {
-            // Int16 Processing (Fallback)
-            if asbd.mBitsPerChannel == 16 {
-                let actualData = data.assumingMemoryBound(to: Int16.self)
-                previousSample = Float(actualData[0])
+        case .int16(let actualData):
+            previousSample = Float(actualData[0])
 
-                for i in 0..<samplesToRead {
-                    let sample = Float(actualData[i * stride]) / 32768.0
-                    sumSquares += sample * sample
+            for i in 0..<samplesToRead {
+                let sample = Float(actualData[i * stride]) / 32768.0
+                sumSquares += sample * sample
 
-                    if (previousSample > 0 && sample <= 0) || (previousSample <= 0 && sample > 0) {
-                        zeroCrossings += 1
-                    }
-                    previousSample = sample
+                if (previousSample > 0 && sample <= 0) || (previousSample <= 0 && sample > 0) {
+                    zeroCrossings += 1
                 }
-            } else if asbd.mBitsPerChannel == 32 {
-                // Int32 Processing
-                let actualData = data.assumingMemoryBound(to: Int32.self)
-                previousSample = Float(actualData[0])
-
-                for i in 0..<samplesToRead {
-                    let sample = Float(actualData[i * stride]) / 2147483648.0
-                    sumSquares += sample * sample
-
-                    if (previousSample > 0 && sample <= 0) || (previousSample <= 0 && sample > 0) {
-                        zeroCrossings += 1
-                    }
-                    previousSample = sample
-                }
+                previousSample = sample
             }
+        case .int32(let actualData):
+            previousSample = Float(actualData[0])
+
+            for i in 0..<samplesToRead {
+                let sample = Float(actualData[i * stride]) / 2147483648.0
+                sumSquares += sample * sample
+
+                if (previousSample > 0 && sample <= 0) || (previousSample <= 0 && sample > 0) {
+                    zeroCrossings += 1
+                }
+                previousSample = sample
+            }
+        case .unsupported:
+            // No samples are read; the math below yields (0, 0), matching the
+            // original code's fallthrough for unrecognized formats.
+            break
         }
 
         let rms = sqrt(sumSquares / Float(samplesToRead))
@@ -665,7 +759,7 @@ extension AudioRecordingService: AVCaptureAudioDataOutputSampleBufferDelegate {
         // Calculate approximate frequency from ZCR
         // Frequency = (Zero Crossings * Sample Rate) / (2 * N)
         // Note: 'stride' reduces effective sample rate for this calculation, so we adjust
-        let effectiveSampleRate = Float(asbd.mSampleRate) / Float(stride)
+        let effectiveSampleRate = Float(sampleRate) / Float(stride)
         let _ = (Float(zeroCrossings) * effectiveSampleRate) / (2.0 * Float(samplesToRead))
 
         // Normalize Frequency for UI (0...1)
@@ -679,9 +773,6 @@ extension AudioRecordingService: AVCaptureAudioDataOutputSampleBufferDelegate {
         var normalizedFreq = zcr * 5.0  // Gain to make changes visible
         normalizedFreq = max(0.0, min(1.0, normalizedFreq))
 
-        DispatchQueue.main.async {
-            self.audioLevel = normalizedLevel
-            self.audioFrequency = normalizedFreq
-        }
+        return (level: normalizedLevel, frequency: normalizedFreq)
     }
 }
