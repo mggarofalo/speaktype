@@ -91,6 +91,7 @@ struct GeneralSettingsTab: View {
     @AppStorage("autoUpdate") private var autoUpdate = false
     @AppStorage("selectedHotkey") private var selectedHotkey: HotkeyOption = .fn
     @AppStorage("recordingMode") private var recordingMode: Int = 0  // 0: Hold to record, 1: Toggle
+    @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
     @AppStorage("hideDockIcon") private var hideDockIcon: Bool = false
     @AppStorage("removeFillerWords") private var removeFillerWords: Bool = false
@@ -212,6 +213,18 @@ struct GeneralSettingsTab: View {
                     )
 
                     VStack(spacing: 16) {
+                        HStack {
+                            Text("Launch on startup")
+                                .font(Typography.bodyMedium)
+                                .foregroundStyle(Color.textPrimary)
+                            Spacer()
+                            Toggle("", isOn: $launchAtLogin)
+                                .labelsHidden()
+                                .onChange(of: launchAtLogin) {
+                                    AppDelegate.applyLaunchAtLoginPolicy()
+                                }
+                        }
+
                         HStack {
                             Text("Show menu bar icon")
                                 .font(Typography.bodyMedium)
