@@ -58,6 +58,7 @@ User-facing changes since the fork point (upstream v1.0.29):
 - Optional filler-word removal ("um", "uh", …) from transcriptions
 - Optionally pause Music/Spotify while recording
 - Menu-bar-only mode (hide the Dock icon)
+- Launch on startup — optionally register SpeakType as a login item
 - Modifier+key chords (e.g. ⌥⌘D) as dictation hotkeys, not just single keys
 - The selected audio input device persists across restarts ([upstream PR #78](https://github.com/karansinghgit/speaktype/pull/78))
 
