@@ -1,5 +1,6 @@
 import Combine
 import KeyboardShortcuts
+import ServiceManagement
 import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -18,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         VocabularyDefaults.register()
         Self.applyDockIconPolicy()
+        Self.syncLaunchAtLoginPreference()
 
         miniRecorderController = MiniRecorderWindowController()
 
@@ -52,6 +54,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             NSApp.setActivationPolicy(.regular)
         }
+    }
+
+    // MARK: - Launch at Login
+
+    /// Register or unregister the app as a macOS login item to match the
+    /// user's "launchAtLogin" preference. Uses SMAppService (macOS 13+).
+    /// Called from Settings whenever the toggle changes.
+    static func applyLaunchAtLoginPolicy() {
+        let shouldLaunch = UserDefaults.standard.bool(forKey: "launchAtLogin")
+        let service = SMAppService.mainApp
+        do {
+            if shouldLaunch {
+                if service.status != .enabled { try service.register() }
+            } else {
+                if service.status == .enabled { try service.unregister() }
+            }
+        } catch {
+            NSLog("Failed to update launch-at-login state: \(error.localizedDescription)")
+        }
+    }
+
+    /// Reconcile the stored preference with the system's actual login-item state.
+    /// The user can change this directly in System Settings > General > Login Items,
+    /// so the system is the source of truth — sync the toggle to match at launch.
+    static func syncLaunchAtLoginPreference() {
+        let isEnabled = SMAppService.mainApp.status == .enabled
+        UserDefaults.standard.set(isEnabled, forKey: "launchAtLogin")
     }
 
     // MARK: - Emoji Picker Suppression
