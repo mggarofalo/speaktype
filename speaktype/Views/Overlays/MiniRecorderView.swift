@@ -75,21 +75,23 @@ struct MiniRecorderView: View {
     @State private var globalEscapeMonitor: Any?
     @State private var localEscapeMonitor: Any?
 
-    // MARK: - State for Animation
-    @State private var phase: CGFloat = 0
+    // MARK: - Live waveform
+    // A rolling window of the most recent real audio levels. Sampled on a fixed
+    // cadence (independent of the audio callback rate) so the bars scroll at a
+    // steady speed, newest on the right — a live readout of the actual signal.
+    private static let waveformBarCount = 15
+    @State private var waveformSamples: [CGFloat] = Array(
+        repeating: 0, count: waveformBarCount)
+    private let waveformTimer = Timer.publish(every: 0.06, on: .main, in: .common)
+        .autoconnect()
 
-    // Calculate bar height based on audio level and position
-    private func barHeight(for index: Int) -> CGFloat {
-        let level = CGFloat(audioRecorder.audioLevel)
+    // Map a normalized 0...1 audio level to a bar height. sqrt gives quiet speech
+    // a visible lift without letting loud peaks run past the max.
+    private func barHeight(for level: CGFloat) -> CGFloat {
         let baseHeight: CGFloat = 4
         let maxHeight: CGFloat = 28
-
-        // Create wave pattern that responds to audio
-        let waveOffset = sin(CGFloat(index) * 0.5 + phase) * 0.3
-        let audioMultiplier = sqrt(level) * (0.8 + waveOffset)
-
-        let height = baseHeight + (maxHeight - baseHeight) * audioMultiplier
-        return max(baseHeight, min(height, maxHeight))
+        let amplitude = min(max(sqrt(level), 0), 1)
+        return baseHeight + (maxHeight - baseHeight) * amplitude
     }
 
     // Default Init for Preview
@@ -123,12 +125,12 @@ struct MiniRecorderView: View {
 
                     // Waveform - bar visualizer style
                     HStack(spacing: 3) {
-                        ForEach(0..<15) { index in
+                        ForEach(0..<Self.waveformBarCount, id: \.self) { index in
                             RoundedRectangle(cornerRadius: 2)
                                 .fill(Color.white.opacity(0.7))
-                                .frame(width: 3, height: barHeight(for: index))
+                                .frame(width: 3, height: barHeight(for: waveformSamples[index]))
                                 .animation(
-                                    .easeInOut(duration: 0.15), value: audioRecorder.audioLevel)
+                                    .easeInOut(duration: 0.12), value: waveformSamples[index])
                         }
                     }
                     .frame(height: 30)
@@ -232,14 +234,16 @@ struct MiniRecorderView: View {
             }
         }
         .onChange(of: isListening) {
-            // Only animate when actually recording to save CPU
-            if isListening {
-                withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) {
-                    phase = .pi * 4
-                }
-            } else {
-                phase = 0
+            // Clear the trace when a session ends so the next one starts flat.
+            if !isListening {
+                waveformSamples = Array(repeating: 0, count: Self.waveformBarCount)
             }
+        }
+        .onReceive(waveformTimer) { _ in
+            // Push the latest real level onto the rolling window while recording.
+            guard isListening else { return }
+            waveformSamples.removeFirst()
+            waveformSamples.append(CGFloat(audioRecorder.audioLevel))
         }
         .onReceive(
             NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
