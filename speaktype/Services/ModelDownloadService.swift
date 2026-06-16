@@ -20,7 +20,7 @@ protocol ModelFileSystem {
     func removeItem(at url: URL) throws
 }
 
-class ModelDownloadService: ObservableObject {
+class ModelDownloadService: ObservableObject, ModelCatalogService {
     static let shared = ModelDownloadService()
 
     @Published var downloadProgress: [String: Double] = [:] // Map Model Variant (String) to progress
