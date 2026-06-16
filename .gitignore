@@ -40,6 +40,9 @@ dist/
 # App-specific
 *.app
 
+# Vendored whisper.cpp xcframework (fetched via scripts/fetch-whisper-xcframework.sh)
+Vendor/WhisperCPP/whisper.xcframework/
+
 # Don't ignore DMG assets (these are needed for builds)
 !dmg-assets/dmg-background.png
 !dmg-assets/dmg-background@2x.png
