@@ -125,7 +125,8 @@ class WhisperService {
             isInitialized = false
             loadingStage = "Preparing whisper.cpp model..."
             do {
-                let modelURL = try await WhisperCppModelStorage.ensureBenchmarkModel { progress in
+                let modelURL = try await WhisperCppModelStorage.ensureModel(variant: variant) {
+                    progress in
                     self.loadingStage = "Downloading model… \(Int(progress * 100))%"
                 }
                 loadingStage = "Loading whisper.cpp model..."

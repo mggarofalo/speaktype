@@ -32,9 +32,14 @@ actor WhisperCppEngine {
         let samples = try Self.decodePCM(url: audioFile)
         let lang = (language == "auto") ? nil : language
         let threads = Int32(max(1, ProcessInfo.processInfo.activeProcessorCount - 2))
+        // Vocabulary parity with the WhisperKit path: bias decoding toward the
+        // user's custom glossary via whisper.cpp's initial_prompt.
+        let initialPrompt = WhisperService.vocabularyPrompt(
+            from: UserDefaults.standard.string(forKey: "customVocabulary") ?? "")
 
         let start = Date()
-        let raw = try context.transcribe(samples: samples, language: lang, threads: threads)
+        let raw = try context.transcribe(
+            samples: samples, language: lang, initialPrompt: initialPrompt, threads: threads)
         let infer = Date().timeIntervalSince(start)
         let audioSeconds = Double(samples.count) / 16000.0
         let rtf = audioSeconds > 0 ? infer / audioSeconds : 0

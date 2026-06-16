@@ -9,8 +9,10 @@ struct AIModel: Identifiable, Equatable {
     let size: String
     let speed: Double  // Score relative to 10
     let accuracy: Double  // Score relative to 10
-    let expectedSizeBytes: Int64  // Minimum expected size in bytes for validation
+    let expectedSizeBytes: Int64  // Minimum expected size in bytes for validation (WhisperKit/CoreML)
     let minimumRAMGB: Int  // Minimum device RAM in GB for reliable loading
+    let ggmlFilename: String  // whisper.cpp GGML weights filename (HuggingFace ggerganov/whisper.cpp)
+    let ggmlExpectedSizeBytes: Int64  // Minimum expected GGML file size in bytes for validation
 
     var languageSupportLabel: String {
         isEnglishOnly ? "English-only" : "Multilingual"
@@ -33,7 +35,9 @@ struct AIModel: Identifiable, Equatable {
             speed: 7.0,  // Optimized but still large
             accuracy: 9.5,  // ~4% WER
             expectedSizeBytes: 1_400_000_000,
-            minimumRAMGB: 8
+            minimumRAMGB: 8,
+            ggmlFilename: "ggml-large-v3-turbo.bin",
+            ggmlExpectedSizeBytes: 1_500_000_000
         ),
         AIModel(
             name: "Whisper Medium",
@@ -44,7 +48,9 @@ struct AIModel: Identifiable, Equatable {
             speed: 5.5,  // Slower due to size
             accuracy: 8.9,  // ~6% WER
             expectedSizeBytes: 1_300_000_000,
-            minimumRAMGB: 8
+            minimumRAMGB: 8,
+            ggmlFilename: "ggml-medium.bin",
+            ggmlExpectedSizeBytes: 1_400_000_000
         ),
         AIModel(
             name: "Whisper Small",
@@ -55,7 +61,9 @@ struct AIModel: Identifiable, Equatable {
             speed: 8.0,  // Fast for its accuracy
             accuracy: 8.5,  // ~5% WER (English)
             expectedSizeBytes: 200_000_000,
-            minimumRAMGB: 4
+            minimumRAMGB: 4,
+            ggmlFilename: "ggml-small.en.bin",
+            ggmlExpectedSizeBytes: 460_000_000
         ),
         AIModel(
             name: "Whisper Base",
@@ -66,7 +74,9 @@ struct AIModel: Identifiable, Equatable {
             speed: 9.0,  // Very fast
             accuracy: 7.5,  // ~7% WER (English)
             expectedSizeBytes: 70_000_000,
-            minimumRAMGB: 2
+            minimumRAMGB: 2,
+            ggmlFilename: "ggml-base.en.bin",
+            ggmlExpectedSizeBytes: 140_000_000
         ),
         AIModel(
             name: "Whisper Tiny",
@@ -77,7 +87,9 @@ struct AIModel: Identifiable, Equatable {
             speed: 9.5,  // Fastest
             accuracy: 6.0,  // ~12% WER
             expectedSizeBytes: 30_000_000,
-            minimumRAMGB: 2
+            minimumRAMGB: 2,
+            ggmlFilename: "ggml-tiny.bin",
+            ggmlExpectedSizeBytes: 74_000_000
         ),
     ]
 
@@ -85,6 +97,11 @@ struct AIModel: Identifiable, Equatable {
     static func expectedSize(for variant: String) -> Int64 {
         return availableModels.first(where: { $0.variant == variant })?.expectedSizeBytes
             ?? 50_000_000
+    }
+
+    /// Looks up a model by its canonical variant id.
+    static func model(for variant: String) -> AIModel? {
+        availableModels.first(where: { $0.variant == variant })
     }
 
     /// Returns the best model recommended for this device's RAM
