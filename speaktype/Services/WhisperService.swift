@@ -1,5 +1,7 @@
+import AVFoundation
 import CoreML
 import Foundation
+import OSLog
 import Tokenizers
 import WhisperKit
 
@@ -77,6 +79,29 @@ class WhisperService {
         }
     }
 
+    /// Compute-unit selection, overridable at runtime for benchmarking:
+    ///   defaults write com.mggarofalo.speaktype debugComputeUnits cpuAndNeuralEngine
+    /// Valid values: cpuAndGPU (default), cpuAndNeuralEngine, all, cpuOnly.
+    static var computeUnitsName: String {
+        UserDefaults.standard.string(forKey: "debugComputeUnits") ?? "cpuAndGPU"
+    }
+
+    static func resolvedComputeUnits() -> MLComputeUnits {
+        switch computeUnitsName {
+        case "cpuAndNeuralEngine": return .cpuAndNeuralEngine
+        case "all": return .all
+        case "cpuOnly": return .cpuOnly
+        default: return .cpuAndGPU
+        }
+    }
+
+    /// Audio duration in seconds, for real-time-factor (RTF) logging. Returns 0 on failure.
+    private static func audioDuration(of url: URL) -> Double {
+        guard let file = try? AVAudioFile(forReading: url) else { return 0 }
+        let rate = file.fileFormat.sampleRate
+        return rate > 0 ? Double(file.length) / rate : 0
+    }
+
     // Init is internal to allow testing, but prefer using .shared in production
     init() {}
 
@@ -132,10 +157,11 @@ class WhisperService {
                 // GPU instead of the default Neural Engine: identical transcription
                 // output, but skips CoreML's ANE specialization pass at load, which
                 // dominates startup (measured 3m08s ANE vs 56s GPU end-to-end for
-                // large-v3_turbo on an M2 Pro/Max).
+                // large-v3_turbo on an M2 Pro/Max). Overridable via the
+                // `debugComputeUnits` default for benchmarking (see resolvedComputeUnits).
                 computeOptions: ModelComputeOptions(
-                    audioEncoderCompute: .cpuAndGPU,
-                    textDecoderCompute: .cpuAndGPU
+                    audioEncoderCompute: Self.resolvedComputeUnits(),
+                    textDecoderCompute: Self.resolvedComputeUnits()
                 ),
                 verbose: false,
                 logLevel: .error,
@@ -153,6 +179,9 @@ class WhisperService {
 
             let loadDuration = Date().timeIntervalSince(loadStart)
             print("⏱️ Model loaded in \(String(format: "%.1f", loadDuration))s")
+            AppLogger.transcription.info(
+                "⏱️ Model \(variant, privacy: .public) loaded in \(String(format: "%.1f", loadDuration), privacy: .public)s [compute=\(Self.computeUnitsName, privacy: .public)]"
+            )
 
             currentModelVariant = variant
             isInitialized = true
@@ -184,7 +213,14 @@ class WhisperService {
 
         do {
             let options = decodingOptions(for: language)
+            let inferStart = Date()
             let results = try await pipe.transcribe(audioPath: audioFile.path, decodeOptions: options)
+            let inferDuration = Date().timeIntervalSince(inferStart)
+            let audioSeconds = Self.audioDuration(of: audioFile)
+            let rtf = audioSeconds > 0 ? inferDuration / audioSeconds : 0
+            AppLogger.transcription.info(
+                "⏱️ Transcribed \(String(format: "%.1f", audioSeconds), privacy: .public)s audio in \(String(format: "%.2f", inferDuration), privacy: .public)s (RTF \(String(format: "%.2f", rtf), privacy: .public)) [compute=\(Self.computeUnitsName, privacy: .public)]"
+            )
             let text = Self.normalizedTranscription(
                 from: results.map { $0.text }.joined(separator: " "))
 
