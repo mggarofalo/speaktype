@@ -99,6 +99,9 @@ struct GeneralSettingsTab: View {
     @AppStorage("customVocabulary") private var customVocabulary: String = VocabularyDefaults.seed
     @AppStorage("transcriptionLanguage") private var transcriptionLanguage: String = "auto"
     @AppStorage("recentTranscriptionLanguages") private var recentLanguagesString: String = ""
+    @AppStorage("transcriptionEngine") private var transcriptionEngine: String =
+        TranscriptionEngineSelection.defaultKind.rawValue
+    @AppStorage("selectedModelVariant") private var selectedModelVariant: String = ""
 
     private var recentLanguageCodes: [String] {
         recentLanguagesString.split(separator: ",").map(String.init).filter { !$0.isEmpty }
@@ -197,6 +200,37 @@ struct GeneralSettingsTab: View {
                                 recordingMode == 0
                                     ? "Hold the hotkey down to record, release when done."
                                     : "Press the hotkey to start recording, press again to stop."
+                            )
+                            .font(Typography.captionSmall)
+                            .foregroundStyle(Color.textMuted)
+                            .padding(.top, 2)
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Transcription engine")
+                                    .font(Typography.bodyMedium)
+                                    .foregroundStyle(Color.textPrimary)
+                                Spacer()
+                                Picker("", selection: $transcriptionEngine) {
+                                    Text("whisper.cpp").tag(TranscriptionEngineKind.whispercpp.rawValue)
+                                    Text("WhisperKit").tag(TranscriptionEngineKind.whisperkit.rawValue)
+                                }
+                                .pickerStyle(.segmented)
+                                .frame(width: 200)
+                                .onChange(of: transcriptionEngine) {
+                                    Task {
+                                        await ModelManager.shared.refreshDownloadedModels()
+                                        if !selectedModelVariant.isEmpty {
+                                            try? await WhisperService.shared.loadModel(
+                                                variant: selectedModelVariant)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text(
+                                "whisper.cpp (Metal) is much faster on Apple Silicon. Each engine uses its own downloaded models."
                             )
                             .font(Typography.captionSmall)
                             .foregroundStyle(Color.textMuted)
