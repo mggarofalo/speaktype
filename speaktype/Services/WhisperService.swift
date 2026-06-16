@@ -72,6 +72,7 @@ class WhisperService {
         case fileNotFound
         case alreadyLoading
         case loadingTimeout
+        case modelNotDownloaded
 
         var errorDescription: String? {
             switch self {
@@ -80,6 +81,8 @@ class WhisperService {
             case .alreadyLoading: return "Model loading already in progress"
             case .loadingTimeout:
                 return "Model loading timed out — your Mac may not have enough RAM for this model"
+            case .modelNotDownloaded:
+                return "Model not downloaded yet — download it from Settings → AI Models"
             }
         }
     }
@@ -121,15 +124,19 @@ class WhisperService {
         // and load it through the native backend. WhisperKit's pipe is unused here.
         if TranscriptionEngineSelection.current == .whispercpp {
             guard !isLoading else { throw TranscriptionError.alreadyLoading }
+            // Downloads happen via the model picker (GgmlModelDownloadService), with
+            // progress and without blocking. loadModel only LOADS an already-present
+            // model — never auto-downloads inline (that would hold isLoading across a
+            // multi-hundred-MB download and wedge every other load/switch).
+            guard WhisperCppModelStorage.isDownloaded(variant: variant),
+                let modelURL = WhisperCppModelStorage.modelURL(for: variant)
+            else {
+                throw TranscriptionError.modelNotDownloaded
+            }
             isLoading = true
             isInitialized = false
-            loadingStage = "Preparing whisper.cpp model..."
+            loadingStage = "Loading whisper.cpp model..."
             do {
-                let modelURL = try await WhisperCppModelStorage.ensureModel(variant: variant) {
-                    progress in
-                    self.loadingStage = "Downloading model… \(Int(progress * 100))%"
-                }
-                loadingStage = "Loading whisper.cpp model..."
                 try await cppEngine.load(modelPath: modelURL.path)
                 currentModelVariant = variant
                 isInitialized = true
