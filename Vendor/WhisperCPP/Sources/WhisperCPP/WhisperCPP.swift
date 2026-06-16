@@ -35,7 +35,10 @@ public final class WhisperCPPContext {
 
     /// Transcribe 16 kHz mono Float PCM samples (range -1...1).
     /// `language` is an ISO code (e.g. "en") or nil for auto-detect.
-    public func transcribe(samples: [Float], language: String?, threads: Int32) throws -> String {
+    /// `initialPrompt` biases decoding toward given spellings (custom vocabulary).
+    public func transcribe(
+        samples: [Float], language: String?, initialPrompt: String?, threads: Int32
+    ) throws -> String {
         guard let ctx else { throw WhisperCPPError.notInitialized }
 
         var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
@@ -45,8 +48,11 @@ public final class WhisperCPPContext {
         params.n_threads = threads
         params.detect_language = (language == nil)
 
-        let run: (UnsafePointer<CChar>?) throws -> String = { langPtr in
+        // language and initial_prompt are borrowed C strings that must stay alive
+        // across the whisper_full call, so bind them via nested withCString.
+        func run(langPtr: UnsafePointer<CChar>?, promptPtr: UnsafePointer<CChar>?) throws -> String {
             params.language = langPtr
+            params.initial_prompt = promptPtr
             let ret = samples.withUnsafeBufferPointer { buf in
                 whisper_full(ctx, params, buf.baseAddress, Int32(buf.count))
             }
@@ -62,10 +68,16 @@ public final class WhisperCPPContext {
             return text
         }
 
-        if let language {
-            return try language.withCString { try run($0) }
-        } else {
-            return try run(nil)
+        func withLanguage(_ promptPtr: UnsafePointer<CChar>?) throws -> String {
+            if let language {
+                return try language.withCString { try run(langPtr: $0, promptPtr: promptPtr) }
+            }
+            return try run(langPtr: nil, promptPtr: promptPtr)
         }
+
+        if let initialPrompt, !initialPrompt.isEmpty {
+            return try initialPrompt.withCString { try withLanguage($0) }
+        }
+        return try withLanguage(nil)
     }
 }

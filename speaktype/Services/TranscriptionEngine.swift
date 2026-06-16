@@ -40,12 +40,22 @@ protocol TranscriptionEngine: AnyObject {
 enum TranscriptionEngineSelection {
     static let defaultsKey = "transcriptionEngine"
 
+    /// whisper.cpp (Metal) is the production default — ~10–15× faster than
+    /// WhisperKit/CoreML for the same model on Apple Silicon. Registered as a
+    /// fallback so an unset key resolves to whisper.cpp while still letting the
+    /// user pick WhisperKit explicitly.
+    static let defaultKind: TranscriptionEngineKind = .whispercpp
+
+    static func registerDefault() {
+        UserDefaults.standard.register(defaults: [defaultsKey: defaultKind.rawValue])
+    }
+
     static var current: TranscriptionEngineKind {
         guard
             let raw = UserDefaults.standard.string(forKey: defaultsKey),
             let kind = TranscriptionEngineKind(rawValue: raw)
         else {
-            return .whisperkit
+            return defaultKind
         }
         return kind
     }
