@@ -10,6 +10,7 @@
 		1C547F2B2F0E7DC0008120A6 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 1C547F2A2F0E7DC0008120A6 /* WhisperKit */; };
 		1CE4CB3F2F0EF6AF00C01C62 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 1CE4CB3E2F0EF6AF00C01C62 /* KeyboardShortcuts */; };
 		1CE4CB412F0EF86B00C01C62 /* whisperkit-cli in Frameworks */ = {isa = PBXBuildFile; productRef = 1CE4CB402F0EF86B00C01C62 /* whisperkit-cli */; };
+		AA01010100000000000000A1 /* WhisperCPP in Frameworks */ = {isa = PBXBuildFile; productRef = AA01010100000000000000A2 /* WhisperCPP */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -74,6 +75,7 @@
 				1C547F2B2F0E7DC0008120A6 /* WhisperKit in Frameworks */,
 				1CE4CB3F2F0EF6AF00C01C62 /* KeyboardShortcuts in Frameworks */,
 				1CE4CB412F0EF86B00C01C62 /* whisperkit-cli in Frameworks */,
+				AA01010100000000000000A1 /* WhisperCPP in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -145,6 +147,7 @@
 				1C547F2A2F0E7DC0008120A6 /* WhisperKit */,
 				1CE4CB3E2F0EF6AF00C01C62 /* KeyboardShortcuts */,
 				1CE4CB402F0EF86B00C01C62 /* whisperkit-cli */,
+				AA01010100000000000000A2 /* WhisperCPP */,
 			);
 			productName = speaktype;
 			productReference = 362947222F0DBC4E00BE895D /* speaktype.app */;
@@ -231,6 +234,7 @@
 			packageReferences = (
 				1C547F222F0E7D07008120A6 /* XCRemoteSwiftPackageReference "WhisperKit" */,
 				1CE4CB3D2F0EF6AF00C01C62 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
+				AA01010100000000000000A3 /* XCLocalSwiftPackageReference "WhisperCPP" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 362947232F0DBC4E00BE895D /* Products */;
@@ -611,6 +615,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		AA01010100000000000000A3 /* XCLocalSwiftPackageReference "WhisperCPP" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Vendor/WhisperCPP;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		1C547F222F0E7D07008120A6 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -645,6 +656,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 1C547F222F0E7D07008120A6 /* XCRemoteSwiftPackageReference "WhisperKit" */;
 			productName = "whisperkit-cli";
+		};
+		AA01010100000000000000A2 /* WhisperCPP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA01010100000000000000A3 /* XCLocalSwiftPackageReference "WhisperCPP" */;
+			productName = WhisperCPP;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
