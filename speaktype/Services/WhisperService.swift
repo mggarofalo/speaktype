@@ -57,6 +57,11 @@ class WhisperService {
 
     var currentModelVariant: String = ""  // No default - must be explicitly set
 
+    /// Alternate engine used when the `transcriptionEngine` default selects
+    /// whisper.cpp (beta benchmarking). WhisperService owns the observable UI
+    /// state and delegates the actual load/transcribe to this engine.
+    private let cppEngine = WhisperCppEngine()
+
     /// Device RAM in GB (cached on init)
     static let deviceRAMGB: Int = {
         Int(ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024))
@@ -112,6 +117,31 @@ class WhisperService {
 
     // Dynamic model loading with optimized WhisperKitConfig
     func loadModel(variant: String) async throws {
+        // whisper.cpp engine path (beta benchmarking): auto-fetch the GGML model
+        // and load it through the native backend. WhisperKit's pipe is unused here.
+        if TranscriptionEngineSelection.current == .whispercpp {
+            guard !isLoading else { throw TranscriptionError.alreadyLoading }
+            isLoading = true
+            isInitialized = false
+            loadingStage = "Preparing whisper.cpp model..."
+            do {
+                let modelURL = try await WhisperCppModelStorage.ensureBenchmarkModel { progress in
+                    self.loadingStage = "Downloading model… \(Int(progress * 100))%"
+                }
+                loadingStage = "Loading whisper.cpp model..."
+                try await cppEngine.load(modelPath: modelURL.path)
+                currentModelVariant = variant
+                isInitialized = true
+                isLoading = false
+                loadingStage = ""
+            } catch {
+                isLoading = false
+                loadingStage = ""
+                throw error
+            }
+            return
+        }
+
         // Already loaded this exact model
         if isInitialized && variant == currentModelVariant && pipe != nil {
             print("✅ Model \(variant) already loaded, skipping")
@@ -198,6 +228,17 @@ class WhisperService {
     }
 
     func transcribe(audioFile: URL, language: String = "auto") async throws -> String {
+        // whisper.cpp engine path (beta benchmarking).
+        if TranscriptionEngineSelection.current == .whispercpp {
+            guard isInitialized else { throw TranscriptionError.notInitialized }
+            guard FileManager.default.fileExists(atPath: audioFile.path) else {
+                throw TranscriptionError.fileNotFound
+            }
+            isTranscribing = true
+            defer { isTranscribing = false }
+            return try await cppEngine.transcribe(audioFile: audioFile, language: language)
+        }
+
         guard let pipe = pipe, isInitialized else {
             throw TranscriptionError.notInitialized
         }
