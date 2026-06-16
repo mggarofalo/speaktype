@@ -26,6 +26,9 @@ if [ ! -f "speaktype.xcodeproj/project.pbxproj" ]; then
   exit 1
 fi
 
+# Ensure the gitignored whisper.cpp xcframework is present before building.
+bash scripts/fetch-whisper-xcframework.sh
+
 echo "Building SpeakType Beta ($BUNDLE_ID, $CONFIG)..."
 xcodebuild \
   -project speaktype.xcodeproj \
