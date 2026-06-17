@@ -315,6 +315,16 @@ class WhisperService {
         var options = DecodingOptions()
         options.task = .transcribe
         options.language = (language == "auto") ? nil : language
+        // Long clips (>30s) are decoded as sequential 30s windows that carry the
+        // prior window's tokens forward as prompt context. If one window slips
+        // into a repetition loop, that looped text re-seeds the next window and
+        // the loop cascades for the rest of the recording — WhisperKit's
+        // per-window compressionRatio/temperature fallbacks can't break out once
+        // the carried prompt keeps re-seeding it. VAD chunking splits at silence
+        // and transcribes each chunk independently (no prompt carry-over), so a
+        // degenerate window stays contained; it also lets long clips decode
+        // concurrently. Short clips are a single chunk and unaffected.
+        options.chunkingStrategy = .vad
         if let promptTokens {
             options.promptTokens = promptTokens
             // Prompt conditioning lowers the decoder's confidence in the first

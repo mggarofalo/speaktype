@@ -7,7 +7,13 @@ struct HistoryView: View {
     @State private var itemPendingDeletion: HistoryItem? = nil
     @State private var expandedItemId: UUID? = nil
     @State private var showCopyToast = false
-    
+    @State private var retranscribingItemId: UUID? = nil
+    @State private var retranscribeError: String? = nil
+
+    @AppStorage("transcriptionLanguage") private var transcriptionLanguage: String = "auto"
+    @AppStorage("selectedModelVariant") private var selectedModel: String = ""
+    private var whisperService: WhisperService { WhisperService.shared }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
@@ -94,6 +100,8 @@ struct HistoryView: View {
                                 },
                                 onCopy: { copyToClipboard(text: item.transcript) },
                                 onDelete: { itemPendingDeletion = item },
+                                onRetranscribe: { retranscribe(item) },
+                                isRetranscribing: retranscribingItemId == item.id,
                                 audioPlayer: audioPlayer
                             )
                         }
@@ -159,8 +167,72 @@ struct HistoryView: View {
                 Text("This will remove the transcript entry from your history.")
             }
         }
+        .alert(
+            "Re-transcription Failed",
+            isPresented: Binding(
+                get: { retranscribeError != nil },
+                set: { if !$0 { retranscribeError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(retranscribeError ?? "")
+        }
     }
-    
+
+    /// Runs the saved recording through Whisper again and overwrites the stored
+    /// transcript in place. The intermittent repetition loop is non-deterministic,
+    /// so a fresh run almost always returns clean text without the user having to
+    /// re-record or drag the file into the Transcribe Audio screen.
+    private func retranscribe(_ item: HistoryItem) {
+        guard let audioURL = item.audioFileURL,
+            FileManager.default.fileExists(atPath: audioURL.path)
+        else {
+            retranscribeError = "The original recording for this transcript is no longer available."
+            return
+        }
+
+        let variant = selectedModel.isEmpty ? whisperService.currentModelVariant : selectedModel
+        guard !variant.isEmpty else {
+            retranscribeError = "No transcription model is selected."
+            return
+        }
+
+        retranscribingItemId = item.id
+        Task {
+            do {
+                if !whisperService.isInitialized || whisperService.currentModelVariant != variant {
+                    try await whisperService.loadModel(variant: variant)
+                }
+
+                let start = Date()
+                let text = try await whisperService.transcribe(
+                    audioFile: audioURL, language: transcriptionLanguage)
+                let elapsed = Date().timeIntervalSince(start)
+
+                let modelName =
+                    AIModel.availableModels.first(where: { $0.variant == variant })?.name ?? variant
+
+                await MainActor.run {
+                    guard !WhisperService.normalizedTranscription(from: text).isEmpty else {
+                        retranscribingItemId = nil
+                        retranscribeError = "No speech was detected in the recording."
+                        return
+                    }
+                    historyService.updateTranscript(
+                        id: item.id, transcript: text, modelUsed: modelName,
+                        transcriptionTime: elapsed)
+                    retranscribingItemId = nil
+                }
+            } catch {
+                await MainActor.run {
+                    retranscribingItemId = nil
+                    retranscribeError = error.localizedDescription
+                }
+            }
+        }
+    }
+
     private func copyToClipboard(text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -203,6 +275,8 @@ struct HistoryCard: View {
     let onToggle: () -> Void
     let onCopy: () -> Void
     let onDelete: () -> Void
+    let onRetranscribe: () -> Void
+    let isRetranscribing: Bool
     @ObservedObject var audioPlayer: AudioPlayerService
     @State private var isHovered = false
     
@@ -357,6 +431,30 @@ struct HistoryCard: View {
                                 }
                                 .buttonStyle(.plain)
                                 
+                                Button(action: onRetranscribe) {
+                                    HStack(spacing: 6) {
+                                        if isRetranscribing {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                            Text("Re-transcribing…")
+                                                .font(Typography.labelMedium)
+                                        } else {
+                                            Image(systemName: "arrow.triangle.2.circlepath")
+                                                .font(.system(size: 12))
+                                            Text("Re-transcribe")
+                                                .font(Typography.labelMedium)
+                                        }
+                                    }
+                                    .foregroundStyle(Color.textSecondary)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .background(Color.bgHover)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(isRetranscribing)
+                                .help("Generate a new transcription from this recording")
+
                                 Button(action: {
                                     NSWorkspace.shared.activateFileViewerSelecting([audioURL])
                                 }) {

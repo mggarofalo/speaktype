@@ -71,6 +71,46 @@ class HistoryService: ObservableObject {
         saveStats()
     }
     
+    /// Replaces an existing item's transcript in place, preserving its id, date,
+    /// duration, and audio file. Used by the History re-transcribe action to
+    /// overwrite a bad transcription with a fresh run of the same recording.
+    /// The matching stats entry's word count is updated so totals stay accurate.
+    func updateTranscript(
+        id: UUID, transcript: String, modelUsed: String? = nil,
+        transcriptionTime: TimeInterval? = nil
+    ) {
+        let normalizedTranscript = WhisperService.normalizedTranscription(from: transcript)
+        guard !normalizedTranscript.isEmpty else { return }
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+
+        let existing = items[index]
+        items[index] = HistoryItem(
+            id: existing.id,
+            date: existing.date,
+            transcript: normalizedTranscript,
+            duration: existing.duration,
+            audioFileURL: existing.audioFileURL,
+            modelUsed: modelUsed ?? existing.modelUsed,
+            transcriptionTime: transcriptionTime ?? existing.transcriptionTime
+        )
+
+        if let statsIndex = statsEntries.firstIndex(where: { $0.id == id }) {
+            let existingStat = statsEntries[statsIndex]
+            let wordCount = normalizedTranscript.components(separatedBy: .whitespacesAndNewlines)
+                .filter { !$0.isEmpty }
+                .count
+            statsEntries[statsIndex] = HistoryStatsEntry(
+                id: existingStat.id,
+                date: existingStat.date,
+                wordCount: wordCount,
+                duration: existingStat.duration
+            )
+            saveStats()
+        }
+
+        saveHistory()
+    }
+
     func deleteItem(at offsets: IndexSet, deleteAudioFile: Bool = true) {
         let itemsToDelete = offsets.compactMap { items.indices.contains($0) ? items[$0] : nil }
         items.remove(atOffsets: offsets)
