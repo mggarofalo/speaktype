@@ -36,8 +36,25 @@ public final class WhisperCPPContext {
     /// Transcribe 16 kHz mono Float PCM samples (range -1...1).
     /// `language` is an ISO code (e.g. "en") or nil for auto-detect.
     /// `initialPrompt` biases decoding toward given spellings (custom vocabulary).
+    ///
+    /// Loop resistance. A 146s dictation degenerated into "…run the application"
+    /// repeated to the end; `entropyThreshold = 3.0` (up from whisper.cpp's 2.4
+    /// default) is what fixes it — empirically: 21× repeated 5-gram → 1×, while
+    /// a normal short clip transcribes byte-identically to the 2.4 default.
+    ///
+    /// `entropyThreshold` + `temperatureIncrement` drive whisper.cpp's built-in
+    /// anti-repetition fallback: a segment whose token entropy falls below the
+    /// threshold (the signature of a loop) is re-decoded at a higher temperature
+    /// instead of being emitted. Only low-entropy segments are affected, so
+    /// raising the bar to 3.0 catches loops without disturbing normal speech.
+    ///
+    /// `noContext` is left at whisper.cpp's default (false) — in validation it
+    /// made no difference to the loop (window context wasn't the cause), and
+    /// keeping context preserves cross-window coherence on long clips. The knobs
+    /// are exposed (with the production defaults) only so tests can sweep them.
     public func transcribe(
-        samples: [Float], language: String?, initialPrompt: String?, threads: Int32
+        samples: [Float], language: String?, initialPrompt: String?, threads: Int32,
+        noContext: Bool = false, entropyThreshold: Float = 3.0, temperatureIncrement: Float = 0.2
     ) throws -> String {
         guard let ctx else { throw WhisperCPPError.notInitialized }
 
@@ -47,6 +64,9 @@ public final class WhisperCPPContext {
         params.print_timestamps = false
         params.n_threads = threads
         params.detect_language = (language == nil)
+        params.no_context = noContext
+        params.entropy_thold = entropyThreshold
+        params.temperature_inc = temperatureIncrement
 
         // language and initial_prompt are borrowed C strings that must stay alive
         // across the whisper_full call, so bind them via nested withCString.
