@@ -4,7 +4,7 @@ import SwiftUI
 struct AIModelsView: View {
     // MARK: - Properties
 
-    @StateObject private var downloadService = ModelDownloadService.shared
+    @StateObject private var downloadService = ModelManager.shared
     @AppStorage("selectedModelVariant") private var selectedModel: String = ""
     @State private var models = AIModel.availableModels
 

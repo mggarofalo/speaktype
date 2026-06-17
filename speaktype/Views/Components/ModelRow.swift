@@ -4,7 +4,7 @@ import SwiftUI
 struct ModelRow: View {
     @Binding var model: AIModel
     @Binding var selectedModel: String
-    @ObservedObject var downloadService = ModelDownloadService.shared
+    @ObservedObject var downloadService = ModelManager.shared
 
     // Use the shared WhisperService for loading state
     private var whisperService: WhisperService { WhisperService.shared }

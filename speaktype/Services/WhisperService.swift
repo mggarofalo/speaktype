@@ -1,5 +1,7 @@
+import AVFoundation
 import CoreML
 import Foundation
+import OSLog
 import Tokenizers
 import WhisperKit
 
@@ -55,6 +57,11 @@ class WhisperService {
 
     var currentModelVariant: String = ""  // No default - must be explicitly set
 
+    /// Alternate engine used when the `transcriptionEngine` default selects
+    /// whisper.cpp (beta benchmarking). WhisperService owns the observable UI
+    /// state and delegates the actual load/transcribe to this engine.
+    private let cppEngine = WhisperCppEngine()
+
     /// Device RAM in GB (cached on init)
     static let deviceRAMGB: Int = {
         Int(ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024))
@@ -65,6 +72,7 @@ class WhisperService {
         case fileNotFound
         case alreadyLoading
         case loadingTimeout
+        case modelNotDownloaded
 
         var errorDescription: String? {
             switch self {
@@ -73,8 +81,33 @@ class WhisperService {
             case .alreadyLoading: return "Model loading already in progress"
             case .loadingTimeout:
                 return "Model loading timed out — your Mac may not have enough RAM for this model"
+            case .modelNotDownloaded:
+                return "Model not downloaded yet — download it from Settings → AI Models"
             }
         }
+    }
+
+    /// Compute-unit selection, overridable at runtime for benchmarking:
+    ///   defaults write com.mggarofalo.speaktype debugComputeUnits cpuAndNeuralEngine
+    /// Valid values: cpuAndGPU (default), cpuAndNeuralEngine, all, cpuOnly.
+    static var computeUnitsName: String {
+        UserDefaults.standard.string(forKey: "debugComputeUnits") ?? "cpuAndGPU"
+    }
+
+    static func resolvedComputeUnits() -> MLComputeUnits {
+        switch computeUnitsName {
+        case "cpuAndNeuralEngine": return .cpuAndNeuralEngine
+        case "all": return .all
+        case "cpuOnly": return .cpuOnly
+        default: return .cpuAndGPU
+        }
+    }
+
+    /// Audio duration in seconds, for real-time-factor (RTF) logging. Returns 0 on failure.
+    private static func audioDuration(of url: URL) -> Double {
+        guard let file = try? AVAudioFile(forReading: url) else { return 0 }
+        let rate = file.fileFormat.sampleRate
+        return rate > 0 ? Double(file.length) / rate : 0
     }
 
     // Init is internal to allow testing, but prefer using .shared in production
@@ -87,6 +120,36 @@ class WhisperService {
 
     // Dynamic model loading with optimized WhisperKitConfig
     func loadModel(variant: String) async throws {
+        // whisper.cpp engine path (beta benchmarking): auto-fetch the GGML model
+        // and load it through the native backend. WhisperKit's pipe is unused here.
+        if TranscriptionEngineSelection.current == .whispercpp {
+            guard !isLoading else { throw TranscriptionError.alreadyLoading }
+            // Downloads happen via the model picker (GgmlModelDownloadService), with
+            // progress and without blocking. loadModel only LOADS an already-present
+            // model — never auto-downloads inline (that would hold isLoading across a
+            // multi-hundred-MB download and wedge every other load/switch).
+            guard WhisperCppModelStorage.isDownloaded(variant: variant),
+                let modelURL = WhisperCppModelStorage.modelURL(for: variant)
+            else {
+                throw TranscriptionError.modelNotDownloaded
+            }
+            isLoading = true
+            isInitialized = false
+            loadingStage = "Loading whisper.cpp model..."
+            do {
+                try await cppEngine.load(modelPath: modelURL.path)
+                currentModelVariant = variant
+                isInitialized = true
+                isLoading = false
+                loadingStage = ""
+            } catch {
+                isLoading = false
+                loadingStage = ""
+                throw error
+            }
+            return
+        }
+
         // Already loaded this exact model
         if isInitialized && variant == currentModelVariant && pipe != nil {
             print("✅ Model \(variant) already loaded, skipping")
@@ -132,10 +195,11 @@ class WhisperService {
                 // GPU instead of the default Neural Engine: identical transcription
                 // output, but skips CoreML's ANE specialization pass at load, which
                 // dominates startup (measured 3m08s ANE vs 56s GPU end-to-end for
-                // large-v3_turbo on an M2 Pro/Max).
+                // large-v3_turbo on an M2 Pro/Max). Overridable via the
+                // `debugComputeUnits` default for benchmarking (see resolvedComputeUnits).
                 computeOptions: ModelComputeOptions(
-                    audioEncoderCompute: .cpuAndGPU,
-                    textDecoderCompute: .cpuAndGPU
+                    audioEncoderCompute: Self.resolvedComputeUnits(),
+                    textDecoderCompute: Self.resolvedComputeUnits()
                 ),
                 verbose: false,
                 logLevel: .error,
@@ -153,6 +217,9 @@ class WhisperService {
 
             let loadDuration = Date().timeIntervalSince(loadStart)
             print("⏱️ Model loaded in \(String(format: "%.1f", loadDuration))s")
+            AppLogger.transcription.info(
+                "⏱️ Model \(variant, privacy: .public) loaded in \(String(format: "%.1f", loadDuration), privacy: .public)s [compute=\(Self.computeUnitsName, privacy: .public)]"
+            )
 
             currentModelVariant = variant
             isInitialized = true
@@ -169,6 +236,17 @@ class WhisperService {
     }
 
     func transcribe(audioFile: URL, language: String = "auto") async throws -> String {
+        // whisper.cpp engine path (beta benchmarking).
+        if TranscriptionEngineSelection.current == .whispercpp {
+            guard isInitialized else { throw TranscriptionError.notInitialized }
+            guard FileManager.default.fileExists(atPath: audioFile.path) else {
+                throw TranscriptionError.fileNotFound
+            }
+            isTranscribing = true
+            defer { isTranscribing = false }
+            return try await cppEngine.transcribe(audioFile: audioFile, language: language)
+        }
+
         guard let pipe = pipe, isInitialized else {
             throw TranscriptionError.notInitialized
         }
@@ -184,7 +262,14 @@ class WhisperService {
 
         do {
             let options = decodingOptions(for: language)
+            let inferStart = Date()
             let results = try await pipe.transcribe(audioPath: audioFile.path, decodeOptions: options)
+            let inferDuration = Date().timeIntervalSince(inferStart)
+            let audioSeconds = Self.audioDuration(of: audioFile)
+            let rtf = audioSeconds > 0 ? inferDuration / audioSeconds : 0
+            AppLogger.transcription.info(
+                "⏱️ Transcribed \(String(format: "%.1f", audioSeconds), privacy: .public)s audio in \(String(format: "%.2f", inferDuration), privacy: .public)s (RTF \(String(format: "%.2f", rtf), privacy: .public)) [compute=\(Self.computeUnitsName, privacy: .public)]"
+            )
             let text = Self.normalizedTranscription(
                 from: results.map { $0.text }.joined(separator: " "))
 
