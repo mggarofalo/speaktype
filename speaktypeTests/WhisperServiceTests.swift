@@ -68,6 +68,20 @@ final class WhisperServiceTests: XCTestCase {
         XCTAssertNil(options.firstTokenLogProbThreshold)
     }
 
+    // Regression: a 146s dictation degenerated into a repetition loop
+    // ("...run the application" repeated to the end). Long clips decode as
+    // sequential 30s windows with prompt carry-over, so one looping window
+    // cascades into the rest. VAD chunking transcribes silence-delimited chunks
+    // independently, containing the loop. Both prompt paths must request it.
+    func testDecodingOptionsUseVADChunking() {
+        XCTAssertEqual(
+            WhisperService.decodingOptions(language: "auto", promptTokens: nil).chunkingStrategy,
+            .vad)
+        XCTAssertEqual(
+            WhisperService.decodingOptions(language: "en", promptTokens: [1, 2, 3]).chunkingStrategy,
+            .vad)
+    }
+
     func testDecodingOptionsLanguageMapping() {
         XCTAssertNil(WhisperService.decodingOptions(language: "auto", promptTokens: nil).language)
         XCTAssertEqual(

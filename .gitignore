@@ -43,6 +43,10 @@ dist/
 # Vendored whisper.cpp xcframework (fetched via scripts/fetch-whisper-xcframework.sh)
 Vendor/WhisperCPP/whisper.xcframework/
 
+# Local-only transcription validation — never commit recordings or throwaway tests
+speaktypeTests/Local/
+*.wav
+
 # Don't ignore DMG assets (these are needed for builds)
 !dmg-assets/dmg-background.png
 !dmg-assets/dmg-background@2x.png
