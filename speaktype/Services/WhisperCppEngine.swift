@@ -26,7 +26,13 @@ actor WhisperCppEngine {
         )
     }
 
-    func transcribe(audioFile: URL, language: String) throws -> String {
+    /// The loop-resistance parameters default to the validated production values
+    /// (see WhisperCPPContext.transcribe — entropyThreshold 3.0 contains the
+    /// repetition loop); they are exposed only so tests can sweep them.
+    func transcribe(
+        audioFile: URL, language: String, noContext: Bool = false,
+        entropyThreshold: Float = 3.0, temperatureIncrement: Float = 0.2
+    ) throws -> String {
         guard let context else { throw WhisperService.TranscriptionError.notInitialized }
 
         let samples = try Self.decodePCM(url: audioFile)
@@ -39,7 +45,9 @@ actor WhisperCppEngine {
 
         let start = Date()
         let raw = try context.transcribe(
-            samples: samples, language: lang, initialPrompt: initialPrompt, threads: threads)
+            samples: samples, language: lang, initialPrompt: initialPrompt, threads: threads,
+            noContext: noContext, entropyThreshold: entropyThreshold,
+            temperatureIncrement: temperatureIncrement)
         let infer = Date().timeIntervalSince(start)
         let audioSeconds = Double(samples.count) / 16000.0
         let rtf = audioSeconds > 0 ? infer / audioSeconds : 0
