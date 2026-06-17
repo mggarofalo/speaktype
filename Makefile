@@ -1,6 +1,6 @@
 # Makefile for SpeakType
 
-.PHONY: help build clean clean-dev test coverage lint format run run-dev run-release setup logs logs-live logs-errors logs-export install uninstall reinstall
+.PHONY: help build clean clean-dev test coverage lint format run run-dev run-release release setup logs logs-live logs-errors logs-export install uninstall reinstall
 
 # Default target
 help:
@@ -25,8 +25,7 @@ help:
 	@echo "  make coverage      - Run unit tests with code coverage report"
 	@echo ""
 	@echo "Distribution:"
-	@echo "  make create-release - 🔨 Bump version, build, sign, notarize → dist/*.dmg"
-	@echo "  make deploy-release - 🚀 Push tag + upload DMG to GitHub releases"
+	@echo "  make release        - 🏷️  Bump version, commit, tag, and push (VERSION=x.y.z optional)"
 	@echo "  make run-release    - Run the last Release build locally"
 	@echo "  make package        - Create ZIP package (unsigned)"
 	@echo "  make dmg            - Create DMG installer (unsigned)"
@@ -40,16 +39,6 @@ help:
 	@echo "  make logs-live     - Stream live logs (alias)"
 	@echo "  make logs-errors   - View recent errors"
 	@echo "  make logs-export   - Export last 24h logs to Desktop"
-	@echo ""
-	@echo "📚 For detailed release instructions, see: RELEASING.md"
-
-# Create the local release (build + sign + notarize → dist/)
-create-release:
-	@./scripts/create-release.sh $(VERSION)
-
-# Deploy the release to GitHub (push tag + upload DMG)
-deploy-release:
-	@./scripts/deploy-release.sh $(VERSION)
 
 # Project setup
 setup:
@@ -193,22 +182,11 @@ dmg:
 	@echo "✅ Created dist/SpeakType.dmg"
 	@ls -lh dist/SpeakType.dmg
 
-# Prepare release (both ZIP and DMG)
+# Cut a release: bump version, commit, tag, and push.
+# A tag is the release — no notarized DMG (the app is self-signed for local use).
+# Optionally pin the version: make release VERSION=1.2.3  (otherwise patch auto-bumps)
 release:
-	@echo "🚀 Preparing release..."
-	@make clean
-	@make package
-	@make dmg
-	@echo ""
-	@echo "✅ Release artifacts ready in dist/"
-	@echo "   - SpeakType.zip (for GitHub Releases)"
-	@echo "   - SpeakType.dmg (for direct download)"
-	@echo ""
-	@echo "Next steps:"
-	@echo "  1. Create a git tag: git tag v1.0.0"
-	@echo "  2. Push tag: git push origin v1.0.0"
-	@echo "  3. GitHub Actions will create the release automatically"
-	@echo "  OR manually: gh release create v1.0.0 dist/SpeakType.dmg --title 'SpeakType v1.0.0'"
+	@./scripts/release.sh $(VERSION)
 
 # Generate documentation
 docs:
