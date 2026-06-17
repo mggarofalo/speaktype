@@ -81,6 +81,57 @@ final class HistoryServiceTests: XCTestCase {
         XCTAssertTrue(service.items.isEmpty)
     }
 
+    // MARK: - updateTranscript (re-transcribe)
+
+    func testUpdateTranscriptReplacesTextInPlacePreservingIdentity() throws {
+        let audioURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        service.addItem(
+            transcript: "run the application run the application",
+            duration: 12.0, audioFileURL: audioURL, modelUsed: "Old Model")
+
+        let original = try XCTUnwrap(service.items.first)
+
+        service.updateTranscript(
+            id: original.id, transcript: "A clean transcript.",
+            modelUsed: "Large v3 Turbo", transcriptionTime: 1.5)
+
+        XCTAssertEqual(service.items.count, 1)
+        let updated = try XCTUnwrap(service.items.first)
+        XCTAssertEqual(updated.id, original.id)
+        XCTAssertEqual(updated.date, original.date)
+        XCTAssertEqual(updated.duration, original.duration)
+        XCTAssertEqual(updated.audioFileURL, audioURL)
+        XCTAssertEqual(updated.transcript, "A clean transcript.")
+        XCTAssertEqual(updated.modelUsed, "Large v3 Turbo")
+        XCTAssertEqual(updated.transcriptionTime, 1.5)
+    }
+
+    func testUpdateTranscriptRefreshesStatsWordCount() throws {
+        service.addItem(transcript: "one two three four five", duration: 5.0)
+        XCTAssertEqual(service.totalWordCount(), 5)
+
+        let id = try XCTUnwrap(service.items.first?.id)
+        service.updateTranscript(id: id, transcript: "now just three words")
+
+        XCTAssertEqual(service.totalWordCount(), 4)
+        XCTAssertEqual(service.transcriptionCount(), 1)
+    }
+
+    func testUpdateTranscriptIgnoresEmptyResultAndUnknownId() throws {
+        service.addItem(transcript: "original text", duration: 5.0)
+        let id = try XCTUnwrap(service.items.first?.id)
+
+        // Empty/whitespace result must not clobber a good transcript.
+        service.updateTranscript(id: id, transcript: "   ")
+        XCTAssertEqual(service.items.first?.transcript, "original text")
+
+        // Unknown id is a no-op.
+        service.updateTranscript(id: UUID(), transcript: "should not appear")
+        XCTAssertEqual(service.items.count, 1)
+        XCTAssertEqual(service.items.first?.transcript, "original text")
+    }
+
     func testClearAllPreservesStatsHistory() {
         service.addItem(transcript: "One short note", duration: 10.0)
         service.addItem(transcript: "Another slightly longer note", duration: 20.0)
