@@ -244,7 +244,18 @@ class WhisperService {
             }
             isTranscribing = true
             defer { isTranscribing = false }
-            return try await cppEngine.transcribe(audioFile: audioFile, language: language)
+            // noContext: true — the engine reuses one persistent WhisperCPPContext
+            // across recordings, and whisper.cpp's no_context=false default seeds
+            // each whisper_full call's decoder prompt from the PREVIOUS call's
+            // decoded tokens (prompt_past persists on the context's state between
+            // calls). For independent push-to-talk dictations that carry-over
+            // leaks one recording's transcript into the start of the next
+            // (observed: "This is the kind of feedback…" bleeding across three
+            // distinct clips). Clearing prompt_past per recording fixes it without
+            // affecting within-clip cross-window coherence, which depends only on
+            // tokens decoded inside the current call, not on no_context.
+            return try await cppEngine.transcribe(
+                audioFile: audioFile, language: language, noContext: true)
         }
 
         guard let pipe = pipe, isInitialized else {
