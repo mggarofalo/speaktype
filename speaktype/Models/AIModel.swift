@@ -13,9 +13,18 @@ struct AIModel: Identifiable, Equatable {
     let minimumRAMGB: Int  // Minimum device RAM in GB for reliable loading
     let ggmlFilename: String  // whisper.cpp GGML weights filename (HuggingFace ggerganov/whisper.cpp)
     let ggmlExpectedSizeBytes: Int64  // Minimum expected GGML file size in bytes for validation
+    let ggmlSize: String  // Human-readable GGML download size; differs from `size` on small models
 
     var languageSupportLabel: String {
         isEnglishOnly ? "English-only" : "Multilingual"
+    }
+
+    /// Download size for the engine actually in use. `size` describes the
+    /// CoreML tree; the whisper.cpp default fetches a GGML file that is roughly
+    /// twice as large for the smaller models, so showing `size` there
+    /// understated the download by 2×.
+    var displaySize: String {
+        TranscriptionEngineSelection.current == .whispercpp ? ggmlSize : size
     }
 
     var isEnglishOnly: Bool {
@@ -37,7 +46,8 @@ struct AIModel: Identifiable, Equatable {
             expectedSizeBytes: 1_400_000_000,
             minimumRAMGB: 8,
             ggmlFilename: "ggml-large-v3-turbo.bin",
-            ggmlExpectedSizeBytes: 1_500_000_000
+            ggmlExpectedSizeBytes: 1_500_000_000,
+            ggmlSize: "1.6 GB"
         ),
         AIModel(
             name: "Whisper Medium",
@@ -50,7 +60,8 @@ struct AIModel: Identifiable, Equatable {
             expectedSizeBytes: 1_300_000_000,
             minimumRAMGB: 8,
             ggmlFilename: "ggml-medium.bin",
-            ggmlExpectedSizeBytes: 1_400_000_000
+            ggmlExpectedSizeBytes: 1_400_000_000,
+            ggmlSize: "1.5 GB"
         ),
         AIModel(
             name: "Whisper Small",
@@ -63,7 +74,8 @@ struct AIModel: Identifiable, Equatable {
             expectedSizeBytes: 200_000_000,
             minimumRAMGB: 4,
             ggmlFilename: "ggml-small.en.bin",
-            ggmlExpectedSizeBytes: 460_000_000
+            ggmlExpectedSizeBytes: 460_000_000,
+            ggmlSize: "488 MB"
         ),
         AIModel(
             name: "Whisper Base",
@@ -76,7 +88,8 @@ struct AIModel: Identifiable, Equatable {
             expectedSizeBytes: 70_000_000,
             minimumRAMGB: 2,
             ggmlFilename: "ggml-base.en.bin",
-            ggmlExpectedSizeBytes: 140_000_000
+            ggmlExpectedSizeBytes: 140_000_000,
+            ggmlSize: "148 MB"
         ),
         AIModel(
             name: "Whisper Tiny",
@@ -89,7 +102,8 @@ struct AIModel: Identifiable, Equatable {
             expectedSizeBytes: 30_000_000,
             minimumRAMGB: 2,
             ggmlFilename: "ggml-tiny.bin",
-            ggmlExpectedSizeBytes: 74_000_000
+            ggmlExpectedSizeBytes: 74_000_000,
+            ggmlSize: "78 MB"
         ),
     ]
 
