@@ -26,13 +26,28 @@ actor WhisperCppEngine {
         )
     }
 
+    /// Releases the native context, which runs `whisper_free` (via
+    /// `WhisperCPPContext.deinit`) and with it frees every Metal buffer ggml
+    /// tracks in its residency-set collection.
+    ///
+    /// Must run before the process exits: ggml's global Metal device is torn
+    /// down by a static destructor during `exit()`, and that teardown asserts
+    /// `[rsets->data count] == 0` ("you haven't deallocated all Metal resources
+    /// before exiting", ggml-metal-device.m). Because this engine is a
+    /// process-lifetime singleton, nothing else ever drops the context.
+    /// See `AppDelegate.applicationShouldTerminate`.
+    func unload() {
+        context = nil
+        loadedModelPath = nil
+    }
+
     /// The loop-resistance parameters default to the validated production values
     /// (see WhisperCPPContext.transcribe — entropyThreshold 3.0 contains the
     /// repetition loop); they are exposed only so tests can sweep them.
     func transcribe(
         audioFile: URL, language: String, noContext: Bool = false,
         entropyThreshold: Float = 3.0, temperatureIncrement: Float = 0.2
-    ) throws -> String {
+    ) throws -> TranscriptionOutput {
         guard let context else { throw WhisperService.TranscriptionError.notInitialized }
 
         let samples = try Self.decodePCM(url: audioFile)
@@ -44,17 +59,20 @@ actor WhisperCppEngine {
             from: UserDefaults.standard.string(forKey: "customVocabulary") ?? "")
 
         let start = Date()
-        let raw = try context.transcribe(
+        let result = try context.transcribe(
             samples: samples, language: lang, initialPrompt: initialPrompt, threads: threads,
             noContext: noContext, entropyThreshold: entropyThreshold,
             temperatureIncrement: temperatureIncrement)
+        let raw = result.text
         let infer = Date().timeIntervalSince(start)
         let audioSeconds = Double(samples.count) / 16000.0
         let rtf = audioSeconds > 0 ? infer / audioSeconds : 0
         AppLogger.transcription.info(
-            "⏱️ Transcribed \(String(format: "%.1f", audioSeconds), privacy: .public)s audio in \(String(format: "%.2f", infer), privacy: .public)s (RTF \(String(format: "%.2f", rtf), privacy: .public)) [compute=whispercpp]"
+            "⏱️ Transcribed \(String(format: "%.1f", audioSeconds), privacy: .public)s audio in \(String(format: "%.2f", infer), privacy: .public)s (RTF \(String(format: "%.2f", rtf), privacy: .public)) [lang=\(result.languageCode ?? "?", privacy: .public)] [compute=whispercpp]"
         )
-        return WhisperService.normalizedTranscription(from: raw)
+        return TranscriptionOutput(
+            text: WhisperService.normalizedTranscription(from: raw),
+            languageCode: result.languageCode)
     }
 
     /// Decodes an audio file to 16 kHz mono Float PCM (range -1...1), the input

@@ -2,11 +2,11 @@ import SwiftUI
 
 struct MainView: View {
     @State private var selection: SidebarItem? = .dashboard
-    @ObservedObject private var downloadService = ModelDownloadService.shared
+    @ObservedObject private var downloadService = ModelManager.shared
     @AppStorage("hasShownModelPrompt") private var hasShownModelPrompt: Bool = false
-    
+
     private var hasAnyModelDownloaded: Bool {
-        downloadService.downloadProgress.values.contains { $0 >= 1.0 }
+        downloadService.hasAnyDownloadedModel
     }
     
     var body: some View {

@@ -102,6 +102,12 @@ struct GeneralSettingsTab: View {
     @AppStorage("transcriptionEngine") private var transcriptionEngine: String =
         TranscriptionEngineSelection.defaultKind.rawValue
     @AppStorage("selectedModelVariant") private var selectedModelVariant: String = ""
+    @AppStorage(WhisperCppTuning.Key.entropyThreshold) private var entropyThreshold: Double =
+        WhisperCppTuning.defaultEntropyThreshold
+    @AppStorage(WhisperCppTuning.Key.temperatureIncrement) private var temperatureIncrement: Double =
+        WhisperCppTuning.defaultTemperatureIncrement
+    @AppStorage(WhisperCppTuning.Key.carryContext) private var carryContext: Bool =
+        WhisperCppTuning.defaultCarryContext
 
     private var recentLanguageCodes: [String] {
         recentLanguagesString.split(separator: ",").map(String.init).filter { !$0.isEmpty }
@@ -112,6 +118,102 @@ struct GeneralSettingsTab: View {
         var recents = recentLanguageCodes.filter { $0 != code }
         recents.insert(code, at: 0)
         recentLanguagesString = recents.prefix(5).joined(separator: ",")
+    }
+
+    // MARK: - Model-aware language selection
+
+    private var selectedModelIsEnglishOnly: Bool {
+        LanguagePreferences.isEnglishOnly(selectedModelVariant)
+    }
+
+    private var selectedModelDisplayName: String {
+        AIModel.model(for: selectedModelVariant)?.name ?? "This model"
+    }
+
+    /// The selection for the *current* model, falling back to the global one.
+    /// Reads `transcriptionLanguage` so the view re-renders when it changes —
+    /// `setLanguage` always mirrors to that key.
+    private var effectiveLanguage: String {
+        _ = transcriptionLanguage
+        return LanguagePreferences.storedLanguage(forModel: selectedModelVariant)
+    }
+
+    private func setLanguage(_ code: String) {
+        LanguagePreferences.setLanguage(code, forModel: selectedModelVariant)
+        updateRecentLanguages(code: code)
+    }
+
+    // MARK: - Decoding parameters (whisper.cpp)
+
+    @ViewBuilder
+    private var decodingSection: some View {
+        SettingsSection {
+            SettingsSectionHeader(
+                icon: "slider.horizontal.3", title: "Decoding",
+                subtitle: "whisper.cpp accuracy trade-offs")
+
+            settingsStepper(
+                title: "Entropy threshold",
+                value: $entropyThreshold, range: 0.5...6.0, step: 0.1, format: "%.1f")
+
+            Text("Guards against repetition loops: a segment whose tokens look degenerate is re-decoded at a higher temperature instead of being emitted. Raising it catches more loops; above about 4 it starts discarding valid speech.")
+                .font(Typography.captionSmall)
+                .foregroundStyle(Color.textMuted)
+                .padding(.top, 4)
+
+            settingsStepper(
+                title: "Temperature increment",
+                value: $temperatureIncrement, range: 0.0...1.0, step: 0.05, format: "%.2f")
+
+            Text("How much hotter each retry decodes. 0 disables the retry entirely, so a looping segment is emitted as-is.")
+                .font(Typography.captionSmall)
+                .foregroundStyle(Color.textMuted)
+                .padding(.top, 4)
+
+            Toggle(isOn: $carryContext) {
+                Text("Carry context between dictations")
+                    .font(Typography.bodyMedium)
+                    .foregroundStyle(Color.textPrimary)
+            }
+            .toggleStyle(.switch)
+            .padding(.top, 6)
+
+            Text("Off is recommended. On, each dictation is prompted with the previous one's text, which can bleed the end of one transcript into the start of the next. It does not affect coherence within a single dictation.")
+                .font(Typography.captionSmall)
+                .foregroundStyle(Color.textMuted)
+                .padding(.top, 4)
+
+            if !WhisperCppTuning.isDefault {
+                Button("Reset to validated defaults") {
+                    WhisperCppTuning.resetToDefaults()
+                    entropyThreshold = WhisperCppTuning.defaultEntropyThreshold
+                    temperatureIncrement = WhisperCppTuning.defaultTemperatureIncrement
+                    carryContext = WhisperCppTuning.defaultCarryContext
+                }
+                .font(Typography.captionSmall)
+                .padding(.top, 6)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func settingsStepper(
+        title: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double,
+        format: String
+    ) -> some View {
+        HStack {
+            Text(title)
+                .font(Typography.bodyMedium)
+                .foregroundStyle(Color.textPrimary)
+            Spacer()
+            Text(String(format: format, value.wrappedValue))
+                .font(Typography.bodySmall.monospacedDigit())
+                .foregroundStyle(Color.textPrimary)
+                .frame(minWidth: 40, alignment: .trailing)
+            Stepper(title, value: value, in: range, step: step)
+                .labelsHidden()
+        }
+        .padding(.top, 6)
     }
 
     @StateObject private var updateService = UpdateService.shared
@@ -331,36 +433,37 @@ struct GeneralSettingsTab: View {
                     HStack {
                         Text("Speech language")
                             .font(Typography.bodyMedium)
-                            .foregroundStyle(Color.textPrimary)
+                            .foregroundStyle(
+                                selectedModelIsEnglishOnly ? Color.textMuted : Color.textPrimary)
                         Spacer()
                         Menu {
-                            Button("Auto-detect spoken language") { transcriptionLanguage = "auto" }
+                            Button("Auto-detect spoken language") { setLanguage("auto") }
                             if !recentLanguageCodes.isEmpty {
                                 Divider()
                                 ForEach(recentLanguageCodes, id: \.self) { code in
                                     if let lang = Self.whisperLanguages.first(where: { $0.code == code }) {
-                                        Button(lang.name) {
-                                            transcriptionLanguage = code
-                                            updateRecentLanguages(code: code)
-                                        }
+                                        Button(lang.name) { setLanguage(code) }
                                     }
                                 }
                             }
                             Divider()
                             ForEach(Self.whisperLanguages, id: \.code) { lang in
-                                Button(lang.name) {
-                                    transcriptionLanguage = lang.code
-                                    updateRecentLanguages(code: lang.code)
-                                }
+                                Button(lang.name) { setLanguage(lang.code) }
                             }
                         } label: {
                             HStack(spacing: 6) {
-                                Text(displayName(for: transcriptionLanguage))
-                                    .font(Typography.bodySmall)
-                                    .foregroundStyle(Color.textPrimary)
+                                Text(
+                                    selectedModelIsEnglishOnly
+                                        ? "English" : displayName(for: effectiveLanguage)
+                                )
+                                .font(Typography.bodySmall)
+                                .foregroundStyle(
+                                    selectedModelIsEnglishOnly ? Color.textMuted : Color.textPrimary)
                                 Image(systemName: "chevron.up.chevron.down")
                                     .font(.system(size: 9))
-                                    .foregroundStyle(Color.textPrimary)
+                                    .foregroundStyle(
+                                        selectedModelIsEnglishOnly
+                                            ? Color.textMuted : Color.textPrimary)
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
@@ -368,27 +471,45 @@ struct GeneralSettingsTab: View {
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                         }
                         .menuStyle(.borderlessButton)
+                        .disabled(selectedModelIsEnglishOnly)
                     }
 
-                    Text("This is a hint for transcription. It does not choose an output language and it does not translate the result.")
+                    // The control is inert on a .en model — whisper.cpp emits
+                    // English from those whatever language is requested — so say
+                    // that instead of letting the setting silently do nothing.
+                    if selectedModelIsEnglishOnly {
+                        Text(
+                            "\(selectedModelDisplayName) is English-only, so it ignores this setting. Choose a multilingual model to dictate in another language."
+                        )
                         .font(Typography.captionSmall)
                         .foregroundStyle(Color.textMuted)
                         .padding(.top, 4)
+                    } else {
+                        Text("Saved per model — each model remembers its own language.")
+                            .font(Typography.captionSmall)
+                            .foregroundStyle(Color.textMuted)
+                            .padding(.top, 4)
 
-                    Text("If this does not match the language you actually speak, the result can be inaccurate or even come back in the wrong language. Auto-detect is the safest default.")
-                        .font(Typography.captionSmall)
-                        .foregroundStyle(Color.textMuted)
-                        .padding(.top, 4)
+                        Text("This is a hint for transcription. It does not choose an output language and it does not translate the result.")
+                            .font(Typography.captionSmall)
+                            .foregroundStyle(Color.textMuted)
+                            .padding(.top, 4)
 
-                    Text("Use a multilingual model for non-English dictation. Accuracy for languages like Hindi depends heavily on the model you selected.")
-                        .font(Typography.captionSmall)
-                        .foregroundStyle(Color.textMuted)
-                        .padding(.top, 4)
+                        Text("If this does not match the language you actually speak, the result can be inaccurate or even come back in the wrong language. Auto-detect is the safest default.")
+                            .font(Typography.captionSmall)
+                            .foregroundStyle(Color.textMuted)
+                            .padding(.top, 4)
 
-                    Text("English-only models (.en) can only output English.")
-                        .font(Typography.captionSmall)
-                        .foregroundStyle(Color.textMuted)
-                        .padding(.top, 4)
+                        Text("Accuracy for languages like Hindi depends heavily on the model you selected.")
+                            .font(Typography.captionSmall)
+                            .foregroundStyle(Color.textMuted)
+                            .padding(.top, 4)
+                    }
+                }
+
+                // Decoding (whisper.cpp only)
+                if transcriptionEngine == TranscriptionEngineKind.whispercpp.rawValue {
+                    decodingSection
                 }
 
                 // Custom Vocabulary

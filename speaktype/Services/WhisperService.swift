@@ -57,6 +57,11 @@ class WhisperService {
 
     var currentModelVariant: String = ""  // No default - must be explicitly set
 
+    /// ISO code the last transcription actually decoded with. Meaningful mainly
+    /// on auto-detect, where it is the model's guess and the only signal the
+    /// user gets that a wrong guess — not bad audio — produced a bad transcript.
+    var lastDetectedLanguage: String?
+
     /// Alternate engine used when the `transcriptionEngine` default selects
     /// whisper.cpp (beta benchmarking). WhisperService owns the observable UI
     /// state and delegates the actual load/transcribe to this engine.
@@ -112,6 +117,15 @@ class WhisperService {
 
     // Init is internal to allow testing, but prefer using .shared in production
     init() {}
+
+    /// Tears down the whisper.cpp backend ahead of process exit. See
+    /// `WhisperCppEngine.unload()` for why this is mandatory rather than tidy.
+    ///
+    /// `nonisolated` so AppKit's terminate handler can await it without needing
+    /// the main actor, which is busy running the terminate-later run loop.
+    nonisolated func shutdown() async {
+        await cppEngine.unload()
+    }
 
     // Default initialization (loads default or saved model)
     func initialize() async throws {
@@ -254,8 +268,13 @@ class WhisperService {
             // distinct clips). Clearing prompt_past per recording fixes it without
             // affecting within-clip cross-window coherence, which depends only on
             // tokens decoded inside the current call, not on no_context.
-            return try await cppEngine.transcribe(
-                audioFile: audioFile, language: language, noContext: true)
+            let output = try await cppEngine.transcribe(
+                audioFile: audioFile, language: language,
+                noContext: WhisperCppTuning.noContext,
+                entropyThreshold: WhisperCppTuning.entropyThreshold,
+                temperatureIncrement: WhisperCppTuning.temperatureIncrement)
+            lastDetectedLanguage = output.languageCode
+            return output.text
         }
 
         guard let pipe = pipe, isInitialized else {
@@ -283,6 +302,7 @@ class WhisperService {
             )
             let text = Self.normalizedTranscription(
                 from: results.map { $0.text }.joined(separator: " "))
+            lastDetectedLanguage = results.first?.language
 
             print("Transcription complete: \(text.prefix(50))...")
             return text
