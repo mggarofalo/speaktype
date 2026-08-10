@@ -18,7 +18,22 @@ Signing constraints (load-bearing — do not "modernize" these):
 
 - **Keep the stable identity.** TCC grants (Accessibility, Microphone) are tied to the signing identity; ad-hoc (`-`) signing changes the CDHash every rebuild and silently invalidates them.
 - **Keep `ENABLE_HARDENED_RUNTIME = NO`.** A self-signed identity has no Team ID, so hardened-runtime library validation makes dyld refuse the embedded `WhisperKit.framework` (`Library not loaded` crash at launch).
-- Building on another machine requires recreating the cert: self-signed code-signing cert named "SpeakType Local Dev", imported to login keychain, trusted for codeSign. macOS rejects OpenSSL 3.x PKCS12 defaults — export with `-legacy`.
+- **Building on another machine requires recreating the cert.** Self-signed, CN `SpeakType Local Dev`, `codeSigning` EKU, imported to the login keychain and trusted for codeSign. Verify with `security find-identity -v -p codesigning` before building — until the cert is *trusted*, import alone leaves it listed as `0 valid identities` and the build fails at the CodeSign step. Working recipe (needs OpenSSL 3.x, e.g. `brew install openssl`; the system LibreSSL `/usr/bin/openssl` has no `-legacy`):
+
+  ```bash
+  P12PASS=some-nonempty-password
+  openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 3650 -nodes \
+    -subj "/CN=SpeakType Local Dev" \
+    -addext "basicConstraints=critical,CA:false" \
+    -addext "keyUsage=critical,digitalSignature" \
+    -addext "extendedKeyUsage=critical,codeSigning"
+  openssl pkcs12 -export -legacy -macalg sha1 -out cert.p12 -inkey key.pem -in cert.pem -passout "pass:$P12PASS"
+  security import cert.p12 -k ~/Library/Keychains/login.keychain-db -P "$P12PASS" -T /usr/bin/codesign
+  security add-trusted-cert -r trustRoot -p codeSign -k ~/Library/Keychains/login.keychain-db cert.pem
+  rm -f key.pem cert.p12   # keychain holds the durable copy
+  ```
+
+  Both `-legacy` **and** `-macalg sha1` are required, and the PKCS12 password must be non-empty. Any of these missing makes `security import` fail with the misleading `MAC verification failed during PKCS12 import (wrong password?)` regardless of the actual password.
 
 ## TCC / Permission Gotchas
 
