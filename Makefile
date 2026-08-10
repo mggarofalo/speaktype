@@ -25,7 +25,7 @@ help:
 	@echo "  make coverage      - Run unit tests with code coverage report"
 	@echo ""
 	@echo "Distribution:"
-	@echo "  make release        - 🏷️  Bump version, commit, tag, and push (VERSION=x.y.z optional)"
+	@echo "  make release        - 🏷️  Bump version, PR it to main, then tag (BUMP=minor / VERSION=x.y.z / DRY_RUN=1)"
 	@echo "  make run-release    - Run the last Release build locally"
 	@echo "  make package        - Create ZIP package (unsigned)"
 	@echo "  make dmg            - Create DMG installer (unsigned)"
@@ -182,11 +182,14 @@ dmg:
 	@echo "✅ Created dist/SpeakType.dmg"
 	@ls -lh dist/SpeakType.dmg
 
-# Cut a release: bump version, commit, tag, and push.
+# Cut a release: bump version, land it on main via PR, then tag.
 # A tag is the release — no notarized DMG (the app is self-signed for local use).
-# Optionally pin the version: make release VERSION=1.2.3  (otherwise patch auto-bumps)
+#   make release                  # patch bump
+#   make release BUMP=minor       # major / minor / patch
+#   make release VERSION=1.2.3    # pin an exact version
+#   make release DRY_RUN=1        # print the plan, change nothing
 release:
-	@./scripts/release.sh $(VERSION)
+	@./scripts/release.sh $(if $(VERSION),$(VERSION),$(BUMP)) $(if $(DRY_RUN),--dry-run,)
 
 # Generate documentation
 docs:
