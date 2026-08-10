@@ -2,11 +2,16 @@
 # release.sh — Cut a release: bump the version, land it on main via PR, tag it.
 #
 # Usage:
-#   ./scripts/release.sh               # auto-bump the patch component
-#   ./scripts/release.sh minor         # bump major / minor / patch by name
+#   ./scripts/release.sh               # infer the bump from Conventional Commits
+#   ./scripts/release.sh minor         # force major / minor / patch
 #   ./scripts/release.sh 1.2.3         # pin an exact version
 #   ./scripts/release.sh --dry-run     # print the plan, change nothing
 #   ./scripts/release.sh --skip-checks # skip the build + unit-test gate
+#
+# Bump inference, from the commits since the last tag:
+#   feat!: / fix!: / BREAKING CHANGE:  → major
+#   feat:                              → minor
+#   everything else                    → patch
 #
 # A "release" here is a version bump plus a git tag. The app is self-signed for
 # local/dev distribution (see AGENTS.md), so there is no notarized DMG and no
@@ -73,16 +78,81 @@ MAJOR=$(echo "$CURRENT_VERSION" | cut -d. -f1)
 MINOR=$(echo "$CURRENT_VERSION" | cut -d. -f2)
 PATCH=$(echo "$CURRENT_VERSION" | cut -d. -f3)
 
+# Commits since the last release. Falls back to all history if the tag is gone.
+if git rev-parse "v${CURRENT_VERSION}" >/dev/null 2>&1; then
+  RANGE="v${CURRENT_VERSION}..HEAD"
+else
+  RANGE="HEAD"
+fi
+
+# ── Infer the bump from Conventional Commits ──────────────────────────────────
+# feat!: / fix!: / any type with ! → major       (breaking)
+# feat:                            → minor       (new capability)
+# everything else                  → patch
+#
+# Merge commits are scanned too but never decide anything on their own: their
+# subject is "Merge pull request #N from …", so the underlying `feat:` commit in
+# the same range is what registers.
+infer_level() {
+  local subjects bodies feat_count breaking
+  subjects=$(git log --format=%s "$RANGE" 2>/dev/null || true)
+  bodies=$(git log --format=%B "$RANGE" 2>/dev/null || true)
+
+  # `!` before the colon, or a BREAKING CHANGE footer (spec allows either).
+  breaking=$(printf '%s\n' "$subjects" | grep -E '^[a-zA-Z]+(\([^)]*\))?!:' | head -1 || true)
+  if [ -n "$breaking" ]; then
+    INFER_LEVEL=major
+    INFER_REASON="breaking change — ${breaking}"
+    return
+  fi
+  if printf '%s\n' "$bodies" | grep -qE '^BREAKING[ -]CHANGE:'; then
+    INFER_LEVEL=major
+    INFER_REASON="breaking change — BREAKING CHANGE footer"
+    return
+  fi
+
+  feat_count=$(printf '%s\n' "$subjects" | grep -cE '^feat(\([^)]*\))?:' || true)
+  if [ "$feat_count" -gt 0 ]; then
+    INFER_LEVEL=minor
+    INFER_REASON="${feat_count} feat: commit(s)"
+    return
+  fi
+
+  INFER_LEVEL=patch
+  INFER_REASON="no feat: or breaking commits"
+}
+
 case "$BUMP_ARG" in
-  ""|patch) VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
-  minor)    VERSION="${MAJOR}.$((MINOR + 1)).0" ;;
-  major)    VERSION="$((MAJOR + 1)).0.0" ;;
+  "")
+    infer_level
+    BUMP_SOURCE="inferred — ${INFER_REASON}"
+    case "$INFER_LEVEL" in
+      major) VERSION="$((MAJOR + 1)).0.0" ;;
+      minor) VERSION="${MAJOR}.$((MINOR + 1)).0" ;;
+      *)     VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+    esac
+    LEVEL="$INFER_LEVEL"
+    ;;
+  patch) VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"; LEVEL=patch; BUMP_SOURCE="forced" ;;
+  minor) VERSION="${MAJOR}.$((MINOR + 1)).0";        LEVEL=minor; BUMP_SOURCE="forced" ;;
+  major) VERSION="$((MAJOR + 1)).0.0";               LEVEL=major; BUMP_SOURCE="forced" ;;
   *)
     VERSION="$BUMP_ARG"
     [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
       || die "Version must be semver (e.g. 1.2.3), or one of: major minor patch"
+    LEVEL="pinned"
+    BUMP_SOURCE="explicit"
     ;;
 esac
+
+# A forced bump smaller than the commits imply is usually a mistake — v1.0.34
+# shipped a feat: as a patch that way. Warn, but let it through.
+if [ "$BUMP_SOURCE" = "forced" ] || [ "$LEVEL" = "pinned" ]; then
+  infer_level
+  if [ "$INFER_LEVEL" != "$LEVEL" ]; then
+    echo "⚠️  Commits since v${CURRENT_VERSION} suggest a ${INFER_LEVEL} bump (${INFER_REASON})." >&2
+  fi
+fi
 
 git rev-parse "v${VERSION}" >/dev/null 2>&1 && die "Tag v${VERSION} already exists locally."
 git ls-remote --exit-code --tags origin "v${VERSION}" >/dev/null 2>&1 \
@@ -94,10 +164,11 @@ RELEASE_BRANCH="chore/release-v${VERSION}"
 
 echo ""
 echo "📈 v${CURRENT_VERSION} (build ${CURRENT_BUILD}) → v${VERSION} (build ${NEXT_BUILD})"
+echo "   bump   : ${LEVEL} (${BUMP_SOURCE})"
 echo "   branch : ${RELEASE_BRANCH} → PR → ${BASE_BRANCH}"
 echo "   tag    : v${VERSION} on ${BASE_BRANCH} after merge"
 echo ""
-git log --oneline "v${CURRENT_VERSION}..HEAD" 2>/dev/null | sed 's/^/   /' || true
+git log --oneline "$RANGE" 2>/dev/null | sed 's/^/   /' || true
 echo ""
 
 if [ "$DRY_RUN" = true ]; then
