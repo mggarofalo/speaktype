@@ -501,15 +501,25 @@ struct HistoryCard: View {
                         }
                         
                         // Metadata
-                        if item.modelUsed != nil {
+                        if item.modelUsed != nil || item.detectedLanguage != nil {
                             Divider()
-                            
+
                             HStack(spacing: 12) {
                                 if let model = item.modelUsed {
                                     HStack(spacing: 6) {
                                         Image(systemName: "cpu")
                                             .font(.system(size: 11))
                                         Text(model)
+                                    }
+                                    .font(Typography.captionSmall)
+                                    .foregroundStyle(Color.textMuted)
+                                }
+
+                                if let code = item.detectedLanguage {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "globe")
+                                            .font(.system(size: 11))
+                                        Text(LanguagePreferences.displayName(for: code))
                                     }
                                     .font(Typography.captionSmall)
                                     .foregroundStyle(Color.textMuted)

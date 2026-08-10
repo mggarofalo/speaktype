@@ -17,6 +17,20 @@ enum TranscriptionEngineKind: String, CaseIterable {
     }
 }
 
+/// A completed transcription: the normalized text plus the language the engine
+/// actually decoded with, so auto-detect's guess can be surfaced rather than
+/// leaving a wrong guess looking like a bad transcript.
+struct TranscriptionOutput: Equatable, Sendable {
+    let text: String
+    /// ISO 639-1 code, or nil when the engine reported none.
+    let languageCode: String?
+
+    init(text: String, languageCode: String? = nil) {
+        self.text = text
+        self.languageCode = languageCode
+    }
+}
+
 /// The transcription surface every engine implements. Mirrors the API the
 /// SwiftUI views already call on `WhisperService.shared`, so a future engine
 /// can be swapped in without touching callers.

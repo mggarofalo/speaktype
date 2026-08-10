@@ -19,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         VocabularyDefaults.register()
         TranscriptionEngineSelection.registerDefault()
+        WhisperCppTuning.registerDefaults()
         Self.applyDockIconPolicy()
         Self.syncLaunchAtLoginPreference()
 

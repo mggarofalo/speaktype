@@ -17,7 +17,27 @@ struct HistoryItem: Identifiable, Codable, Hashable {
     let audioFileURL: URL?
     let modelUsed: String?
     let transcriptionTime: TimeInterval?
-    
+    /// ISO code the engine decoded with. Optional so entries saved before this
+    /// existed still decode (a missing key reads as nil).
+    let detectedLanguage: String?
+
+    /// Explicit so `detectedLanguage` can default, leaving existing call sites
+    /// unchanged.
+    init(
+        id: UUID, date: Date, transcript: String, duration: TimeInterval,
+        audioFileURL: URL? = nil, modelUsed: String? = nil,
+        transcriptionTime: TimeInterval? = nil, detectedLanguage: String? = nil
+    ) {
+        self.id = id
+        self.date = date
+        self.transcript = transcript
+        self.duration = duration
+        self.audioFileURL = audioFileURL
+        self.modelUsed = modelUsed
+        self.transcriptionTime = transcriptionTime
+        self.detectedLanguage = detectedLanguage
+    }
+
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
@@ -41,7 +61,7 @@ class HistoryService: ObservableObject {
         loadHistory()
     }
     
-    func addItem(transcript: String, duration: TimeInterval, audioFileURL: URL? = nil, modelUsed: String? = nil, transcriptionTime: TimeInterval? = nil) {
+    func addItem(transcript: String, duration: TimeInterval, audioFileURL: URL? = nil, modelUsed: String? = nil, transcriptionTime: TimeInterval? = nil, detectedLanguage: String? = nil) {
         let normalizedTranscript = WhisperService.normalizedTranscription(from: transcript)
         guard !normalizedTranscript.isEmpty else { return }
 
@@ -57,7 +77,8 @@ class HistoryService: ObservableObject {
             duration: duration,
             audioFileURL: audioFileURL,
             modelUsed: modelUsed,
-            transcriptionTime: transcriptionTime
+            transcriptionTime: transcriptionTime,
+            detectedLanguage: detectedLanguage
         )
         let statsEntry = HistoryStatsEntry(
             id: newItem.id,

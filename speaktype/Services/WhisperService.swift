@@ -57,6 +57,11 @@ class WhisperService {
 
     var currentModelVariant: String = ""  // No default - must be explicitly set
 
+    /// ISO code the last transcription actually decoded with. Meaningful mainly
+    /// on auto-detect, where it is the model's guess and the only signal the
+    /// user gets that a wrong guess — not bad audio — produced a bad transcript.
+    var lastDetectedLanguage: String?
+
     /// Alternate engine used when the `transcriptionEngine` default selects
     /// whisper.cpp (beta benchmarking). WhisperService owns the observable UI
     /// state and delegates the actual load/transcribe to this engine.
@@ -263,8 +268,13 @@ class WhisperService {
             // distinct clips). Clearing prompt_past per recording fixes it without
             // affecting within-clip cross-window coherence, which depends only on
             // tokens decoded inside the current call, not on no_context.
-            return try await cppEngine.transcribe(
-                audioFile: audioFile, language: language, noContext: true)
+            let output = try await cppEngine.transcribe(
+                audioFile: audioFile, language: language,
+                noContext: WhisperCppTuning.noContext,
+                entropyThreshold: WhisperCppTuning.entropyThreshold,
+                temperatureIncrement: WhisperCppTuning.temperatureIncrement)
+            lastDetectedLanguage = output.languageCode
+            return output.text
         }
 
         guard let pipe = pipe, isInitialized else {
@@ -292,6 +302,7 @@ class WhisperService {
             )
             let text = Self.normalizedTranscription(
                 from: results.map { $0.text }.joined(separator: " "))
+            lastDetectedLanguage = results.first?.language
 
             print("Transcription complete: \(text.prefix(50))...")
             return text

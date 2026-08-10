@@ -27,7 +27,7 @@ struct MiniRecorderView: View {
 
     private var quickLanguageCodes: [String] {
         var orderedCodes: [String] = []
-        let candidateCodes = [transcriptionLanguage] + recentLanguageCodes + quickLanguageDefaults
+        let candidateCodes = [modelLanguage] + recentLanguageCodes + quickLanguageDefaults
 
         for code in candidateCodes where code != "auto" {
             guard !orderedCodes.contains(code) else { continue }
@@ -48,22 +48,48 @@ struct MiniRecorderView: View {
     }
 
     private func setLanguage(_ code: String) {
-        transcriptionLanguage = code
+        LanguagePreferences.setLanguage(code, forModel: selectedModel)
         updateRecentLanguages(code: code)
     }
 
+    /// The selection for the current model. Touches `transcriptionLanguage` so
+    /// the view re-renders on change — `setLanguage` always mirrors to it.
+    private var modelLanguage: String {
+        _ = transcriptionLanguage
+        return LanguagePreferences.storedLanguage(forModel: selectedModel)
+    }
+
+    private var isEnglishOnlyModel: Bool {
+        LanguagePreferences.isEnglishOnly(selectedModel)
+    }
+
     private var currentLanguageLabel: String {
-        if transcriptionLanguage == "auto" { return "Auto" }
-        return spokenLanguageDisplayName(for: transcriptionLanguage)
+        if isEnglishOnlyModel { return "English" }
+        if modelLanguage == "auto" { return "Auto" }
+        return spokenLanguageDisplayName(for: modelLanguage)
     }
 
     private var spokenLanguageHelpText: String {
-        if transcriptionLanguage == "auto" {
+        if isEnglishOnlyModel {
+            return
+                "This model is English-only, so it always transcribes English. Choose a multilingual model to dictate in another language."
+        }
+
+        if modelLanguage == "auto" {
             return "Spoken language hint: Auto-detect. SpeakType will try to detect the language you are speaking."
         }
 
         return
-            "Spoken language hint: \(spokenLanguageDisplayName(for: transcriptionLanguage)). If this does not match the language you actually speak, the result may be inaccurate or come back in the wrong language."
+            "Spoken language hint: \(spokenLanguageDisplayName(for: modelLanguage)). If this does not match the language you actually speak, the result may be inaccurate or come back in the wrong language."
+    }
+
+    /// What auto-detect actually settled on, shown only when it could differ
+    /// from what the user asked for.
+    private var detectedLanguageLabel: String? {
+        guard !isEnglishOnlyModel, modelLanguage == "auto",
+            let code = whisperService.lastDetectedLanguage
+        else { return nil }
+        return spokenLanguageDisplayName(for: code)
     }
 
     private var isAccessibilityEnabled: Bool {
@@ -115,10 +141,20 @@ struct MiniRecorderView: View {
                 }
                 .transition(.opacity)
             } else if isProcessing {
-                Text(statusMessage)
-                    .font(Typography.labelMedium)
-                    .foregroundColor(.white)
-                    .transition(.opacity)
+                VStack(spacing: 2) {
+                    Text(statusMessage)
+                        .font(Typography.labelMedium)
+                        .foregroundColor(.white)
+                    // Auto-detect is otherwise invisible: a wrong guess just
+                    // looks like a bad transcript, so name what it picked.
+                    if let detectedLanguageLabel {
+                        Text("Detected: \(detectedLanguageLabel)")
+                            .font(.system(size: 10))
+                            .foregroundColor(.white.opacity(0.75))
+                            .lineLimit(1)
+                    }
+                }
+                .transition(.opacity)
             } else {
                 HStack(spacing: 12) {
                     stopButton
@@ -169,17 +205,22 @@ struct MiniRecorderView: View {
                                     .lineLimit(1)
                                     .truncationMode(.tail)
 
-                                DoubleChevronIcon(color: .white.opacity(0.92))
+                                if !isEnglishOnlyModel {
+                                    DoubleChevronIcon(color: .white.opacity(0.92))
+                                }
                             }
                             .frame(maxWidth: 74, alignment: .leading)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Color.white.opacity(0.15))
+                            .background(Color.white.opacity(isEnglishOnlyModel ? 0.08 : 0.15))
                             .clipShape(RoundedRectangle(cornerRadius: 4))
                         }
                         .menuIndicator(.hidden)
                         .menuStyle(.borderlessButton)
                         .fixedSize()
+                        // Inert on a .en model — whisper.cpp emits English from
+                        // those whatever is requested.
+                        .disabled(isEnglishOnlyModel)
                         .help(spokenLanguageHelpText)
 
                         // Recording mode indicator
@@ -568,7 +609,9 @@ struct MiniRecorderView: View {
             if !cancelCommit {
                 await MainActor.run { statusMessage = "Transcribing..." }
             }
-            let text = try await whisperService.transcribe(audioFile: url, language: transcriptionLanguage)
+            let text = try await whisperService.transcribe(
+                audioFile: url,
+                language: LanguagePreferences.effectiveLanguage(forModel: selectedModel))
             debugLog("Transcription result: \(text.prefix(50))...")
 
             guard !text.isEmpty else {
@@ -592,7 +635,8 @@ struct MiniRecorderView: View {
                 duration: duration,
                 audioFileURL: url,
                 modelUsed: modelName,
-                transcriptionTime: nil
+                transcriptionTime: nil,
+                detectedLanguage: whisperService.lastDetectedLanguage
             )
 
             debugLog("Calling onCommit...")
@@ -632,8 +676,7 @@ struct MiniRecorderView: View {
     }
 
     private func spokenLanguageDisplayName(for code: String) -> String {
-        if code == "auto" { return "Auto-detect" }
-        return GeneralSettingsTab.whisperLanguages.first(where: { $0.code == code })?.name ?? code
+        LanguagePreferences.displayName(for: code)
     }
 }
 

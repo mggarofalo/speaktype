@@ -15,6 +15,20 @@ public enum WhisperCPPError: Error, LocalizedError {
     }
 }
 
+/// One decode's output: the raw text plus the language whisper.cpp actually
+/// used. On auto-detect the code is the model's guess, which is worth surfacing
+/// — a wrong guess otherwise just looks like a bad transcript.
+public struct WhisperCPPResult: Sendable, Equatable {
+    public let text: String
+    /// ISO 639-1 code (e.g. "en"), or nil if whisper.cpp reported none.
+    public let languageCode: String?
+
+    public init(text: String, languageCode: String?) {
+        self.text = text
+        self.languageCode = languageCode
+    }
+}
+
 /// Thin Swift wrapper over the whisper.cpp C API. Isolates all C interop so the
 /// app target deals only in Swift types. GPU (Metal) is on by default.
 public final class WhisperCPPContext {
@@ -78,7 +92,7 @@ public final class WhisperCPPContext {
     public func transcribe(
         samples: [Float], language: String?, initialPrompt: String?, threads: Int32,
         noContext: Bool = false, entropyThreshold: Float = 3.0, temperatureIncrement: Float = 0.2
-    ) throws -> String {
+    ) throws -> WhisperCPPResult {
         guard let ctx else { throw WhisperCPPError.notInitialized }
 
         var params = Self.makeParams(
@@ -87,7 +101,9 @@ public final class WhisperCPPContext {
 
         // language and initial_prompt are borrowed C strings that must stay alive
         // across the whisper_full call, so bind them via nested withCString.
-        func run(langPtr: UnsafePointer<CChar>?, promptPtr: UnsafePointer<CChar>?) throws -> String {
+        func run(langPtr: UnsafePointer<CChar>?, promptPtr: UnsafePointer<CChar>?) throws
+            -> WhisperCPPResult
+        {
             params.language = langPtr
             params.initial_prompt = promptPtr
             let ret = samples.withUnsafeBufferPointer { buf in
@@ -102,10 +118,19 @@ public final class WhisperCPPContext {
                     text += String(cString: cstr)
                 }
             }
-            return text
+
+            // The language whisper.cpp actually decoded with: the auto-detected
+            // one when `language` was nil, otherwise what was requested.
+            var languageCode: String?
+            let langId = whisper_full_lang_id(ctx)
+            if langId >= 0, let cstr = whisper_lang_str(langId) {
+                languageCode = String(cString: cstr)
+            }
+
+            return WhisperCPPResult(text: text, languageCode: languageCode)
         }
 
-        func withLanguage(_ promptPtr: UnsafePointer<CChar>?) throws -> String {
+        func withLanguage(_ promptPtr: UnsafePointer<CChar>?) throws -> WhisperCPPResult {
             if let language {
                 return try language.withCString { try run(langPtr: $0, promptPtr: promptPtr) }
             }
