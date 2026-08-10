@@ -418,9 +418,9 @@ struct MiniRecorderView: View {
             return
         }
 
-        // Check if model is downloaded
-        let progress = ModelDownloadService.shared.downloadProgress[selectedModel] ?? 0
-        guard progress >= 1.0 else {
+        // Check if model is downloaded (engine-aware — the whisper.cpp models
+        // live in their own store and are invisible to ModelDownloadService).
+        guard ModelManager.shared.isDownloaded(variant: selectedModel) else {
             debugLog("Model not downloaded - showing error")
             isProcessing = true
             statusMessage = "Model not downloaded"
