@@ -33,6 +33,29 @@ public final class WhisperCPPContext {
         if let ctx { whisper_free(ctx) }
     }
 
+    /// Builds the decode parameters. Split out from `transcribe` so tests can
+    /// assert the invariants that are otherwise invisible from outside the C API.
+    ///
+    /// Load-bearing: `detect_language` is deliberately left at its default of
+    /// false, including for auto-detect. Setting it means "detect the language
+    /// and stop" — `whisper_full` returns 0 having emitted zero segments, so
+    /// every dictation on the default "Auto" language came back empty and the
+    /// UI reported "No speech detected". Auto-detect is requested by leaving
+    /// `params.language` nil, which detects *and then transcribes*.
+    public static func makeParams(
+        threads: Int32, noContext: Bool, entropyThreshold: Float, temperatureIncrement: Float
+    ) -> whisper_full_params {
+        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+        params.print_realtime = false
+        params.print_progress = false
+        params.print_timestamps = false
+        params.n_threads = threads
+        params.no_context = noContext
+        params.entropy_thold = entropyThreshold
+        params.temperature_inc = temperatureIncrement
+        return params
+    }
+
     /// Transcribe 16 kHz mono Float PCM samples (range -1...1).
     /// `language` is an ISO code (e.g. "en") or nil for auto-detect.
     /// `initialPrompt` biases decoding toward given spellings (custom vocabulary).
@@ -58,15 +81,9 @@ public final class WhisperCPPContext {
     ) throws -> String {
         guard let ctx else { throw WhisperCPPError.notInitialized }
 
-        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
-        params.print_realtime = false
-        params.print_progress = false
-        params.print_timestamps = false
-        params.n_threads = threads
-        params.detect_language = (language == nil)
-        params.no_context = noContext
-        params.entropy_thold = entropyThreshold
-        params.temperature_inc = temperatureIncrement
+        var params = Self.makeParams(
+            threads: threads, noContext: noContext, entropyThreshold: entropyThreshold,
+            temperatureIncrement: temperatureIncrement)
 
         // language and initial_prompt are borrowed C strings that must stay alive
         // across the whisper_full call, so bind them via nested withCString.
