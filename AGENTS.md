@@ -40,11 +40,23 @@ Signing constraints (load-bearing — do not "modernize" these):
 `make release` is the whole process. A release is a version bump plus a git tag — the app is self-signed, so there is no notarized DMG and no GitHub Release object. The tag *is* the release.
 
 ```bash
-make release                # patch bump (1.0.34 → 1.0.35)
-make release BUMP=minor     # major / minor / patch
+make release                # bump inferred from the commits
+make release BUMP=minor     # force major / minor / patch
 make release VERSION=1.2.3  # pin an exact version
 make release DRY_RUN=1      # print the plan and the commit list, change nothing
 ```
+
+**The version comes from the commit subjects**, read as [Conventional Commits](https://www.conventionalcommits.org/) over the range since the last tag:
+
+| Commits since the last tag | Bump |
+| --- | --- |
+| `feat!:`, `fix!:`, any type with `!`, or a `BREAKING CHANGE:` footer | major |
+| `feat:` (scopes fine — `feat(ui):`) | minor |
+| everything else — `fix:`, `chore:`, `docs:`, `refactor:` | patch |
+
+This is why commit subjects are worth getting right: a feature committed as `chore:` ships as a patch. That already happened once — v1.0.34 carried a `feat:` and went out as a patch bump because the level was chosen by hand. Merge commits are scanned but decide nothing on their own, since their subject is `Merge pull request #N from …`; the underlying `feat:` in the same range is what registers.
+
+Forcing a level that contradicts the commits still works, but prints a warning first.
 
 Run it from a clean, synced `main`. The script refuses otherwise, and those refusals are the point — they are cheaper than unwinding a half-cut release.
 
@@ -55,8 +67,6 @@ What it does, and why the shape is load-bearing:
 - **Tags the merge commit on `main`.** Tags therefore sit on `main` rather than on a branch that gets deleted seconds later. `v1.0.33` and `v1.0.34` disagree about this for historical reasons; everything from `v1.0.35` on is consistent.
 
 If the merge step fails, the branch and bump commit are already pushed — merge the PR by hand, then `git tag vX.Y.Z && git push origin vX.Y.Z` from `main`. The script tells you this when it bails.
-
-Version choice is a judgement call the script cannot make: it defaults to a patch bump, so pass `BUMP=minor` when a release adds user-facing capability rather than only repairing things.
 
 ## TCC / Permission Gotchas
 

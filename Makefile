@@ -25,7 +25,7 @@ help:
 	@echo "  make coverage      - Run unit tests with code coverage report"
 	@echo ""
 	@echo "Distribution:"
-	@echo "  make release        - 🏷️  Bump version, PR it to main, then tag (BUMP=minor / VERSION=x.y.z / DRY_RUN=1)"
+	@echo "  make release        - 🏷️  Bump (inferred from commits), PR to main, tag (BUMP= / VERSION= / DRY_RUN=1)"
 	@echo "  make run-release    - Run the last Release build locally"
 	@echo "  make package        - Create ZIP package (unsigned)"
 	@echo "  make dmg            - Create DMG installer (unsigned)"
@@ -184,8 +184,10 @@ dmg:
 
 # Cut a release: bump version, land it on main via PR, then tag.
 # A tag is the release — no notarized DMG (the app is self-signed for local use).
-#   make release                  # patch bump
-#   make release BUMP=minor       # major / minor / patch
+# The bump level comes from the Conventional Commit subjects since the last tag:
+# feat! / BREAKING CHANGE → major, feat → minor, everything else → patch.
+#   make release                  # inferred bump
+#   make release BUMP=minor       # force major / minor / patch
 #   make release VERSION=1.2.3    # pin an exact version
 #   make release DRY_RUN=1        # print the plan, change nothing
 release:
