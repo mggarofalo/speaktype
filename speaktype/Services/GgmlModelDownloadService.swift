@@ -45,7 +45,12 @@ class GgmlModelDownloadService: ObservableObject, ModelCatalogService {
                 }
                 downloadProgress[variant] = 1.0
             } catch {
-                if !(error is CancellationError) {
+                // URLSession surfaces a cancelled transfer as URLError.cancelled,
+                // not CancellationError, so checking only the latter reported the
+                // user's own cancellation back to them as a download failure.
+                let wasCancelled =
+                    error is CancellationError || (error as? URLError)?.code == .cancelled
+                if !wasCancelled {
                     downloadError[variant] = error.localizedDescription
                 }
                 downloadProgress[variant] = 0.0
