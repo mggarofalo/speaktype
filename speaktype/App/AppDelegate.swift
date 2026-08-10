@@ -41,6 +41,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    // MARK: - Termination
+
+    private var didReplyToTerminate = false
+
+    /// Free the whisper.cpp context before AppKit calls `exit()`.
+    ///
+    /// ⌘Q used to abort with "SpeakType quit unexpectedly": `exit()` runs ggml's
+    /// static destructors, which tear down its global Metal device and assert
+    /// `[rsets->data count] == 0` — "most likely you haven't deallocated all
+    /// Metal resources before exiting" (ggml-metal-device.m:622). The engine is a
+    /// process-lifetime singleton, so `whisper_free` had never run and the
+    /// residency set was still populated. Releasing it here empties the set.
+    ///
+    /// `.terminateLater` (rather than blocking on a semaphore) because the app
+    /// runs under default MainActor isolation — parking the main thread while
+    /// awaiting main-actor work would deadlock.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Task { @MainActor in
+            await WhisperService.shared.shutdown()
+            self.replyToTerminateOnce()
+        }
+        // Backstop: a transcription in flight serializes ahead of unload() on the
+        // engine actor. Quitting late beats hanging unquittably.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            self.replyToTerminateOnce()
+        }
+        return .terminateLater
+    }
+
+    private func replyToTerminateOnce() {
+        guard !didReplyToTerminate else { return }
+        didReplyToTerminate = true
+        NSApp.reply(toApplicationShouldTerminate: true)
+    }
+
     // MARK: - Dock Icon
 
     /// Apply the user's Dock icon preference. `.accessory` hides the Dock icon

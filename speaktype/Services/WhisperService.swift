@@ -113,6 +113,15 @@ class WhisperService {
     // Init is internal to allow testing, but prefer using .shared in production
     init() {}
 
+    /// Tears down the whisper.cpp backend ahead of process exit. See
+    /// `WhisperCppEngine.unload()` for why this is mandatory rather than tidy.
+    ///
+    /// `nonisolated` so AppKit's terminate handler can await it without needing
+    /// the main actor, which is busy running the terminate-later run loop.
+    nonisolated func shutdown() async {
+        await cppEngine.unload()
+    }
+
     // Default initialization (loads default or saved model)
     func initialize() async throws {
         try await loadModel(variant: currentModelVariant)

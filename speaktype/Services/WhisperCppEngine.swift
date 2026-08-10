@@ -26,6 +26,21 @@ actor WhisperCppEngine {
         )
     }
 
+    /// Releases the native context, which runs `whisper_free` (via
+    /// `WhisperCPPContext.deinit`) and with it frees every Metal buffer ggml
+    /// tracks in its residency-set collection.
+    ///
+    /// Must run before the process exits: ggml's global Metal device is torn
+    /// down by a static destructor during `exit()`, and that teardown asserts
+    /// `[rsets->data count] == 0` ("you haven't deallocated all Metal resources
+    /// before exiting", ggml-metal-device.m). Because this engine is a
+    /// process-lifetime singleton, nothing else ever drops the context.
+    /// See `AppDelegate.applicationShouldTerminate`.
+    func unload() {
+        context = nil
+        loadedModelPath = nil
+    }
+
     /// The loop-resistance parameters default to the validated production values
     /// (see WhisperCPPContext.transcribe — entropyThreshold 3.0 contains the
     /// repetition loop); they are exposed only so tests can sweep them.
