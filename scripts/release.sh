@@ -122,9 +122,11 @@ infer_level() {
   INFER_REASON="no feat: or breaking commits"
 }
 
+INFERRED=false
 case "$BUMP_ARG" in
   "")
     infer_level
+    INFERRED=true
     BUMP_SOURCE="inferred — ${INFER_REASON}"
     case "$INFER_LEVEL" in
       major) VERSION="$((MAJOR + 1)).0.0" ;;
@@ -145,12 +147,19 @@ case "$BUMP_ARG" in
     ;;
 esac
 
-# A forced bump smaller than the commits imply is usually a mistake — v1.0.34
-# shipped a feat: as a patch that way. Warn, but let it through.
-if [ "$BUMP_SOURCE" = "forced" ] || [ "$LEVEL" = "pinned" ]; then
+# A forced or pinned version that disagrees with the commits is usually a
+# mistake — v1.0.34 shipped a feat: as a patch that way. Compare the resulting
+# versions rather than the level names, so pinning the version inference would
+# have produced anyway stays quiet.
+if [ "$INFERRED" = false ]; then
   infer_level
-  if [ "$INFER_LEVEL" != "$LEVEL" ]; then
-    echo "⚠️  Commits since v${CURRENT_VERSION} suggest a ${INFER_LEVEL} bump (${INFER_REASON})." >&2
+  case "$INFER_LEVEL" in
+    major) SUGGESTED="$((MAJOR + 1)).0.0" ;;
+    minor) SUGGESTED="${MAJOR}.$((MINOR + 1)).0" ;;
+    *)     SUGGESTED="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+  esac
+  if [ "$VERSION" != "$SUGGESTED" ]; then
+    echo "⚠️  Commits since v${CURRENT_VERSION} suggest ${INFER_LEVEL} (v${SUGGESTED}) — ${INFER_REASON}." >&2
   fi
 fi
 
