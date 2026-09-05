@@ -3,7 +3,7 @@ import KeyboardShortcuts
 import SwiftUI
 
 struct SettingsView: View {
-    @State private var selectedTab: SettingsTab = .general
+    @AppStorage("selectedSettingsTab") private var selectedTab: SettingsTab = .general
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,6 +33,8 @@ struct SettingsView: View {
             switch selectedTab {
             case .general:
                 GeneralSettingsTab()
+            case .transcription:
+                GeneralSettingsTab(transcriptionOnly: true)
             case .audio:
                 AudioSettingsTab()
             case .permissions:
@@ -45,6 +47,7 @@ struct SettingsView: View {
 
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general = "General"
+    case transcription = "Transcription"
     case audio = "Audio"
     case permissions = "Permissions"
 
@@ -53,6 +56,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .general: return "gearshape"
+        case .transcription: return "waveform"
         case .audio: return "mic"
         case .permissions: return "shield"
         }
@@ -85,6 +89,9 @@ struct SettingsTabButton: View {
 // MARK: - General Settings Tab
 
 struct GeneralSettingsTab: View {
+    var transcriptionOnly = false
+    @State private var engineStatus: String?
+    @State private var isSwitchingEngine = false
     @AppStorage("appTheme") private var appTheme: AppTheme = .system
     // Default false to match AppDelegate's UserDefaults read — private by default,
     // no network traffic until the user explicitly opts in to update checks.
@@ -156,19 +163,23 @@ struct GeneralSettingsTab: View {
                 title: "Entropy threshold",
                 value: $entropyThreshold, range: 0.5...6.0, step: 0.1, format: "%.1f")
 
-            Text("Guards against repetition loops: a segment whose tokens look degenerate is re-decoded at a higher temperature instead of being emitted. Raising it catches more loops; above about 4 it starts discarding valid speech.")
-                .font(Typography.captionSmall)
-                .foregroundStyle(Color.textMuted)
-                .padding(.top, 4)
+            Text(
+                "Guards against repetition loops: a segment whose tokens look degenerate is re-decoded at a higher temperature instead of being emitted. Raising it catches more loops; above about 4 it starts discarding valid speech."
+            )
+            .font(Typography.captionSmall)
+            .foregroundStyle(Color.textMuted)
+            .padding(.top, 4)
 
             settingsStepper(
                 title: "Temperature increment",
                 value: $temperatureIncrement, range: 0.0...1.0, step: 0.05, format: "%.2f")
 
-            Text("How much hotter each retry decodes. 0 disables the retry entirely, so a looping segment is emitted as-is.")
-                .font(Typography.captionSmall)
-                .foregroundStyle(Color.textMuted)
-                .padding(.top, 4)
+            Text(
+                "How much hotter each retry decodes. 0 disables the retry entirely, so a looping segment is emitted as-is."
+            )
+            .font(Typography.captionSmall)
+            .foregroundStyle(Color.textMuted)
+            .padding(.top, 4)
 
             Toggle(isOn: $carryContext) {
                 Text("Carry context between dictations")
@@ -178,10 +189,12 @@ struct GeneralSettingsTab: View {
             .toggleStyle(.switch)
             .padding(.top, 6)
 
-            Text("Off is recommended. On, each dictation is prompted with the previous one's text, which can bleed the end of one transcript into the start of the next. It does not affect coherence within a single dictation.")
-                .font(Typography.captionSmall)
-                .foregroundStyle(Color.textMuted)
-                .padding(.top, 4)
+            Text(
+                "Off is recommended. On, each dictation is prompted with the previous one's text, which can bleed the end of one transcript into the start of the next. It does not affect coherence within a single dictation."
+            )
+            .font(Typography.captionSmall)
+            .foregroundStyle(Color.textMuted)
+            .padding(.top, 4)
 
             if !WhisperCppTuning.isDefault {
                 Button("Reset to validated defaults") {
@@ -221,93 +234,186 @@ struct GeneralSettingsTab: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                // Appearance
-                SettingsSection {
-                    SettingsSectionHeader(
-                        icon: "paintpalette", title: "Appearance",
-                        subtitle: "Choose your preferred theme")
+                if !transcriptionOnly {
+                    // Appearance
+                    SettingsSection {
+                        SettingsSectionHeader(
+                            icon: "paintpalette", title: "Appearance",
+                            subtitle: "Choose your preferred theme")
 
-                    HStack(spacing: 20) {
-                        ForEach(AppTheme.allCases) { theme in
-                            RadioButton(
-                                title: theme.rawValue,
-                                isSelected: appTheme == theme,
-                                action: { appTheme = theme }
-                            )
+                        HStack(spacing: 20) {
+                            ForEach(AppTheme.allCases) { theme in
+                                RadioButton(
+                                    title: theme.rawValue,
+                                    isSelected: appTheme == theme,
+                                    action: { appTheme = theme }
+                                )
+                            }
                         }
                     }
+
+                    // Shortcuts
+                    SettingsSection {
+                        SettingsSectionHeader(
+                            icon: "command", title: "Shortcuts", subtitle: "Configure recording hotkeys"
+                        )
+
+                        VStack(spacing: 16) {
+                            HStack {
+                                Text("Primary Hotkey")
+                                    .font(Typography.bodyMedium)
+                                    .foregroundStyle(Color.textPrimary)
+                                Spacer()
+                                Menu {
+                                    ForEach(HotkeyOption.allCases) { option in
+                                        Button(option.displayName) {
+                                            selectedHotkey = option
+                                            AppDelegate.syncChordHotkeyEnabled()
+                                        }
+                                    }
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Text(selectedHotkey.displayName)
+                                            .font(Typography.bodySmall)
+                                            .foregroundStyle(Color.textPrimary)
+                                        Image(systemName: "chevron.up.chevron.down")
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(Color.textPrimary)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(Color.bgHover)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                }
+                                .menuStyle(.borderlessButton)
+                            }
+
+                            if selectedHotkey == .chord {
+                                HStack {
+                                    Text("Chord")
+                                        .font(Typography.bodyMedium)
+                                        .foregroundStyle(Color.textPrimary)
+                                    Spacer()
+                                    KeyboardShortcuts.Recorder("", name: .dictationChord)
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("Recording Mode")
+                                        .font(Typography.bodyMedium)
+                                        .foregroundStyle(Color.textPrimary)
+                                    Spacer()
+                                    Picker("", selection: $recordingMode) {
+                                        Text("Hold to record").tag(0)
+                                        Text("Toggle").tag(1)
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .frame(width: 180)
+                                }
+
+                                Text(
+                                    recordingMode == 0
+                                        ? "Hold the hotkey down to record, release when done."
+                                        : "Press the hotkey to start recording, press again to stop."
+                                )
+                                .font(Typography.captionSmall)
+                                .foregroundStyle(Color.textMuted)
+                                .padding(.top, 2)
+                            }
+
+                        }
+                    }
+
+                    // General Behavior
+                    SettingsSection {
+                        SettingsSectionHeader(
+                            icon: "macwindow", title: "General", subtitle: "App behavior settings"
+                        )
+
+                        VStack(spacing: 16) {
+                            HStack {
+                                Text("Launch on startup")
+                                    .font(Typography.bodyMedium)
+                                    .foregroundStyle(Color.textPrimary)
+                                Spacer()
+                                Toggle("", isOn: $launchAtLogin)
+                                    .labelsHidden()
+                                    .onChange(of: launchAtLogin) {
+                                        AppDelegate.applyLaunchAtLoginPolicy()
+                                    }
+                            }
+
+                            HStack {
+                                Text("Show menu bar icon")
+                                    .font(Typography.bodyMedium)
+                                    .foregroundStyle(Color.textPrimary)
+                                Spacer()
+                                Toggle("", isOn: $showMenuBarIcon)
+                                    .labelsHidden()
+                                    .disabled(hideDockIcon)  // Must stay reachable somehow
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("Hide Dock icon")
+                                        .font(Typography.bodyMedium)
+                                        .foregroundStyle(Color.textPrimary)
+                                    Spacer()
+                                    Toggle("", isOn: $hideDockIcon)
+                                        .labelsHidden()
+                                        .onChange(of: hideDockIcon) {
+                                            if hideDockIcon { showMenuBarIcon = true }
+                                            AppDelegate.applyDockIconPolicy()
+                                        }
+                                }
+
+                                if hideDockIcon {
+                                    Text("The menu bar icon stays on so you can reach the app.")
+                                        .font(Typography.captionSmall)
+                                        .foregroundStyle(Color.textMuted)
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("Remove filler words")
+                                        .font(Typography.bodyMedium)
+                                        .foregroundStyle(Color.textPrimary)
+                                    Spacer()
+                                    Toggle("", isOn: $removeFillerWords)
+                                        .labelsHidden()
+                                }
+
+                                Text("Strips \"um\", \"uh\", \"erm\", and \"hmm\" from transcriptions.")
+                                    .font(Typography.captionSmall)
+                                    .foregroundStyle(Color.textMuted)
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("Pause media while recording")
+                                        .font(Typography.bodyMedium)
+                                        .foregroundStyle(Color.textPrimary)
+                                    Spacer()
+                                    Toggle("", isOn: $pauseMediaDuringRecording)
+                                        .labelsHidden()
+                                }
+
+                                Text("Pauses Music or Spotify when dictation starts and resumes after.")
+                                    .font(Typography.captionSmall)
+                                    .foregroundStyle(Color.textMuted)
+                            }
+                        }
+                    }
+
                 }
 
-                // Shortcuts
-                SettingsSection {
-                    SettingsSectionHeader(
-                        icon: "command", title: "Shortcuts", subtitle: "Configure recording hotkeys"
-                    )
-
-                    VStack(spacing: 16) {
-                        HStack {
-                            Text("Primary Hotkey")
-                                .font(Typography.bodyMedium)
-                                .foregroundStyle(Color.textPrimary)
-                            Spacer()
-                            Menu {
-                                ForEach(HotkeyOption.allCases) { option in
-                                    Button(option.displayName) {
-                                        selectedHotkey = option
-                                        AppDelegate.syncChordHotkeyEnabled()
-                                    }
-                                }
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Text(selectedHotkey.displayName)
-                                        .font(Typography.bodySmall)
-                                        .foregroundStyle(Color.textPrimary)
-                                    Image(systemName: "chevron.up.chevron.down")
-                                        .font(.system(size: 9))
-                                        .foregroundStyle(Color.textPrimary)
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .background(Color.bgHover)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                            }
-                            .menuStyle(.borderlessButton)
-                        }
-
-                        if selectedHotkey == .chord {
-                            HStack {
-                                Text("Chord")
-                                    .font(Typography.bodyMedium)
-                                    .foregroundStyle(Color.textPrimary)
-                                Spacer()
-                                KeyboardShortcuts.Recorder("", name: .dictationChord)
-                            }
-                        }
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("Recording Mode")
-                                    .font(Typography.bodyMedium)
-                                    .foregroundStyle(Color.textPrimary)
-                                Spacer()
-                                Picker("", selection: $recordingMode) {
-                                    Text("Hold to record").tag(0)
-                                    Text("Toggle").tag(1)
-                                }
-                                .pickerStyle(.segmented)
-                                .frame(width: 180)
-                            }
-
-                            Text(
-                                recordingMode == 0
-                                    ? "Hold the hotkey down to record, release when done."
-                                    : "Press the hotkey to start recording, press again to stop."
-                            )
-                            .font(Typography.captionSmall)
-                            .foregroundStyle(Color.textMuted)
-                            .padding(.top, 2)
-                        }
-
+                if transcriptionOnly {
+                    SettingsSection {
+                        SettingsSectionHeader(
+                            icon: "cpu", title: "Transcription engine", subtitle: "Choose how speech is processed"
+                        )
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Text("Transcription engine")
@@ -320,14 +426,9 @@ struct GeneralSettingsTab: View {
                                 }
                                 .pickerStyle(.segmented)
                                 .frame(width: 200)
+                                .disabled(isSwitchingEngine || WhisperService.shared.isLoading)
                                 .onChange(of: transcriptionEngine) {
-                                    Task {
-                                        await ModelManager.shared.refreshDownloadedModels()
-                                        if !selectedModelVariant.isEmpty {
-                                            try? await WhisperService.shared.loadModel(
-                                                variant: selectedModelVariant)
-                                        }
-                                    }
+                                    switchEngine()
                                 }
                             }
 
@@ -338,253 +439,206 @@ struct GeneralSettingsTab: View {
                             .foregroundStyle(Color.textMuted)
                             .padding(.top, 2)
                         }
-
-                    }
-                }
-
-                // General Behavior
-                SettingsSection {
-                    SettingsSectionHeader(
-                        icon: "macwindow", title: "General", subtitle: "App behavior settings"
-                    )
-
-                    VStack(spacing: 16) {
-                        HStack {
-                            Text("Launch on startup")
-                                .font(Typography.bodyMedium)
-                                .foregroundStyle(Color.textPrimary)
-                            Spacer()
-                            Toggle("", isOn: $launchAtLogin)
-                                .labelsHidden()
-                                .onChange(of: launchAtLogin) {
-                                    AppDelegate.applyLaunchAtLoginPolicy()
-                                }
-                        }
-
-                        HStack {
-                            Text("Show menu bar icon")
-                                .font(Typography.bodyMedium)
-                                .foregroundStyle(Color.textPrimary)
-                            Spacer()
-                            Toggle("", isOn: $showMenuBarIcon)
-                                .labelsHidden()
-                                .disabled(hideDockIcon)  // Must stay reachable somehow
-                        }
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("Hide Dock icon")
-                                    .font(Typography.bodyMedium)
-                                    .foregroundStyle(Color.textPrimary)
-                                Spacer()
-                                Toggle("", isOn: $hideDockIcon)
-                                    .labelsHidden()
-                                    .onChange(of: hideDockIcon) {
-                                        if hideDockIcon { showMenuBarIcon = true }
-                                        AppDelegate.applyDockIconPolicy()
-                                    }
-                            }
-
-                            if hideDockIcon {
-                                Text("The menu bar icon stays on so you can reach the app.")
-                                    .font(Typography.captionSmall)
-                                    .foregroundStyle(Color.textMuted)
-                            }
-                        }
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("Remove filler words")
-                                    .font(Typography.bodyMedium)
-                                    .foregroundStyle(Color.textPrimary)
-                                Spacer()
-                                Toggle("", isOn: $removeFillerWords)
-                                    .labelsHidden()
-                            }
-
-                            Text("Strips \"um\", \"uh\", \"erm\", and \"hmm\" from transcriptions.")
-                                .font(Typography.captionSmall)
-                                .foregroundStyle(Color.textMuted)
-                        }
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("Pause media while recording")
-                                    .font(Typography.bodyMedium)
-                                    .foregroundStyle(Color.textPrimary)
-                                Spacer()
-                                Toggle("", isOn: $pauseMediaDuringRecording)
-                                    .labelsHidden()
-                            }
-
-                            Text("Pauses Music or Spotify when dictation starts and resumes after.")
-                                .font(Typography.captionSmall)
-                                .foregroundStyle(Color.textMuted)
-                        }
-                    }
-                }
-
-                // Spoken Language
-                SettingsSection {
-                    SettingsSectionHeader(
-                        icon: "globe", title: "Spoken Language",
-                        subtitle: "Hint for the language you are speaking")
-
-                    HStack {
-                        Text("Speech language")
-                            .font(Typography.bodyMedium)
-                            .foregroundStyle(
-                                selectedModelIsEnglishOnly ? Color.textMuted : Color.textPrimary)
-                        Spacer()
-                        Menu {
-                            Button("Auto-detect spoken language") { setLanguage("auto") }
-                            if !recentLanguageCodes.isEmpty {
-                                Divider()
-                                ForEach(recentLanguageCodes, id: \.self) { code in
-                                    if let lang = Self.whisperLanguages.first(where: { $0.code == code }) {
-                                        Button(lang.name) { setLanguage(code) }
-                                    }
-                                }
-                            }
-                            Divider()
-                            ForEach(Self.whisperLanguages, id: \.code) { lang in
-                                Button(lang.name) { setLanguage(lang.code) }
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Text(
-                                    selectedModelIsEnglishOnly
-                                        ? "English" : displayName(for: effectiveLanguage)
-                                )
+                        if let engineStatus {
+                            Text(engineStatus)
                                 .font(Typography.bodySmall)
+                                .foregroundStyle(Color.textSecondary)
+                                .accessibilityLabel(engineStatus)
+                        }
+                    }
+
+                    // Spoken Language
+                    SettingsSection {
+                        SettingsSectionHeader(
+                            icon: "globe", title: "Spoken Language",
+                            subtitle: "Hint for the language you are speaking")
+
+                        HStack {
+                            Text("Speech language")
+                                .font(Typography.bodyMedium)
                                 .foregroundStyle(
                                     selectedModelIsEnglishOnly ? Color.textMuted : Color.textPrimary)
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(
-                                        selectedModelIsEnglishOnly
-                                            ? Color.textMuted : Color.textPrimary)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(Color.bgHover)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                        }
-                        .menuStyle(.borderlessButton)
-                        .disabled(selectedModelIsEnglishOnly)
-                    }
-
-                    // The control is inert on a .en model — whisper.cpp emits
-                    // English from those whatever language is requested — so say
-                    // that instead of letting the setting silently do nothing.
-                    if selectedModelIsEnglishOnly {
-                        Text(
-                            "\(selectedModelDisplayName) is English-only, so it ignores this setting. Choose a multilingual model to dictate in another language."
-                        )
-                        .font(Typography.captionSmall)
-                        .foregroundStyle(Color.textMuted)
-                        .padding(.top, 4)
-                    } else {
-                        Text("Saved per model — each model remembers its own language.")
-                            .font(Typography.captionSmall)
-                            .foregroundStyle(Color.textMuted)
-                            .padding(.top, 4)
-
-                        Text("This is a hint for transcription. It does not choose an output language and it does not translate the result.")
-                            .font(Typography.captionSmall)
-                            .foregroundStyle(Color.textMuted)
-                            .padding(.top, 4)
-
-                        Text("If this does not match the language you actually speak, the result can be inaccurate or even come back in the wrong language. Auto-detect is the safest default.")
-                            .font(Typography.captionSmall)
-                            .foregroundStyle(Color.textMuted)
-                            .padding(.top, 4)
-
-                        Text("Accuracy for languages like Hindi depends heavily on the model you selected.")
-                            .font(Typography.captionSmall)
-                            .foregroundStyle(Color.textMuted)
-                            .padding(.top, 4)
-                    }
-                }
-
-                // Decoding (whisper.cpp only)
-                if transcriptionEngine == TranscriptionEngineKind.whispercpp.rawValue {
-                    decodingSection
-                }
-
-                // Custom Vocabulary
-                SettingsSection {
-                    SettingsSectionHeader(
-                        icon: "text.book.closed", title: "Custom Vocabulary",
-                        subtitle: "Names and terms the transcriber should know")
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        TextEditor(text: $customVocabulary)
-                            .font(Typography.bodySmall)
-                            .foregroundStyle(Color.textPrimary)
-                            .scrollContentBackground(.hidden)
-                            .padding(8)
-                            .frame(minHeight: 90, maxHeight: 140)
-                            .background(Color.bgHover)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                        Text(
-                            "Comma- or newline-separated. Biases transcription toward these spellings — useful for product names, coworkers, and jargon. Applies to the next dictation; leave empty to disable."
-                        )
-                        .font(Typography.captionSmall)
-                        .foregroundStyle(Color.textMuted)
-                    }
-                }
-
-                // Updates
-                SettingsSection {
-                    SettingsSectionHeader(
-                        icon: "arrow.down.circle", title: "Updates",
-                        subtitle: "SpeakType \(AppVersion.currentVersion)")
-
-                    VStack(spacing: 16) {
-                        HStack {
-                            Text("Automatically check for updates")
-                                .font(Typography.bodyMedium)
-                                .foregroundStyle(Color.textPrimary)
                             Spacer()
-                            Toggle("", isOn: $autoUpdate)
-                                .labelsHidden()
+                            Menu {
+                                Button("Auto-detect spoken language") { setLanguage("auto") }
+                                if !recentLanguageCodes.isEmpty {
+                                    Divider()
+                                    ForEach(recentLanguageCodes, id: \.self) { code in
+                                        if let lang = Self.whisperLanguages.first(where: { $0.code == code }) {
+                                            Button(lang.name) { setLanguage(code) }
+                                        }
+                                    }
+                                }
+                                Divider()
+                                ForEach(Self.whisperLanguages, id: \.code) { lang in
+                                    Button(lang.name) { setLanguage(lang.code) }
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text(
+                                        selectedModelIsEnglishOnly
+                                            ? "English" : displayName(for: effectiveLanguage)
+                                    )
+                                    .font(Typography.bodySmall)
+                                    .foregroundStyle(
+                                        selectedModelIsEnglishOnly ? Color.textMuted : Color.textPrimary)
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(
+                                            selectedModelIsEnglishOnly
+                                                ? Color.textMuted : Color.textPrimary)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(Color.bgHover)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                            }
+                            .menuStyle(.borderlessButton)
+                            .disabled(selectedModelIsEnglishOnly)
                         }
 
-                        Button(action: {
-                            Task {
-                                await updateService.checkForUpdates()
-                            }
-                        }) {
-                            HStack(spacing: 6) {
-                                if updateService.isCheckingForUpdates {
-                                    ProgressView()
-                                        .scaleEffect(0.7)
-                                        .frame(width: 14, height: 14)
-                                } else {
-                                    Image(systemName: "arrow.clockwise")
-                                        .font(.system(size: 12))
-                                }
-                                Text(
-                                    updateService.isCheckingForUpdates
-                                        ? "Checking..." : "Check for Updates"
-                                )
-                                .font(Typography.labelMedium)
-                            }
-                            .foregroundStyle(Color.textPrimary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .background(Color.bgHover)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        // The control is inert on a .en model — whisper.cpp emits
+                        // English from those whatever language is requested — so say
+                        // that instead of letting the setting silently do nothing.
+                        if selectedModelIsEnglishOnly {
+                            Text(
+                                "\(selectedModelDisplayName) is English-only, so it ignores this setting. Choose a multilingual model to dictate in another language."
+                            )
+                            .font(Typography.captionSmall)
+                            .foregroundStyle(Color.textMuted)
+                            .padding(.top, 4)
+                        } else {
+                            Text("Saved per model — each model remembers its own language.")
+                                .font(Typography.captionSmall)
+                                .foregroundStyle(Color.textMuted)
+                                .padding(.top, 4)
+
+                            Text(
+                                "This is a hint for transcription. It does not choose an output language and it does not translate the result."
+                            )
+                            .font(Typography.captionSmall)
+                            .foregroundStyle(Color.textMuted)
+                            .padding(.top, 4)
+
+                            Text(
+                                "If this does not match the language you actually speak, the result can be inaccurate or even come back in the wrong language. Auto-detect is the safest default."
+                            )
+                            .font(Typography.captionSmall)
+                            .foregroundStyle(Color.textMuted)
+                            .padding(.top, 4)
+
+                            Text("Accuracy for languages like Hindi depends heavily on the model you selected.")
+                                .font(Typography.captionSmall)
+                                .foregroundStyle(Color.textMuted)
+                                .padding(.top, 4)
                         }
-                        .buttonStyle(.plain)
-                        .disabled(updateService.isCheckingForUpdates)
+                    }
+
+                    // Decoding (whisper.cpp only)
+                    if transcriptionEngine == TranscriptionEngineKind.whispercpp.rawValue {
+                        decodingSection
+                    }
+
+                    // Custom Vocabulary
+                    SettingsSection {
+                        SettingsSectionHeader(
+                            icon: "text.book.closed", title: "Custom Vocabulary",
+                            subtitle: "Names and terms the transcriber should know")
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            TextEditor(text: $customVocabulary)
+                                .font(Typography.bodySmall)
+                                .foregroundStyle(Color.textPrimary)
+                                .scrollContentBackground(.hidden)
+                                .padding(8)
+                                .frame(minHeight: 90, maxHeight: 140)
+                                .background(Color.bgHover)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                            Text(
+                                "Comma- or newline-separated. Biases transcription toward these spellings — useful for product names, coworkers, and jargon. Applies to the next dictation; leave empty to disable."
+                            )
+                            .font(Typography.captionSmall)
+                            .foregroundStyle(Color.textMuted)
+                        }
+                    }
+
+                }
+
+                if !transcriptionOnly {
+                    // Updates
+                    SettingsSection {
+                        SettingsSectionHeader(
+                            icon: "arrow.down.circle", title: "Updates",
+                            subtitle: "SpeakType \(AppVersion.currentVersion)")
+
+                        VStack(spacing: 16) {
+                            HStack {
+                                Text("Automatically check for updates")
+                                    .font(Typography.bodyMedium)
+                                    .foregroundStyle(Color.textPrimary)
+                                Spacer()
+                                Toggle("", isOn: $autoUpdate)
+                                    .labelsHidden()
+                            }
+
+                            Button(action: {
+                                Task {
+                                    await updateService.checkForUpdates()
+                                }
+                            }) {
+                                HStack(spacing: 6) {
+                                    if updateService.isCheckingForUpdates {
+                                        ProgressView()
+                                            .scaleEffect(0.7)
+                                            .frame(width: 14, height: 14)
+                                    } else {
+                                        Image(systemName: "arrow.clockwise")
+                                            .font(.system(size: 12))
+                                    }
+                                    Text(
+                                        updateService.isCheckingForUpdates
+                                            ? "Checking..." : "Check for Updates"
+                                    )
+                                    .font(Typography.labelMedium)
+                                }
+                                .foregroundStyle(Color.textPrimary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background(Color.bgHover)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(updateService.isCheckingForUpdates)
+                        }
                     }
                 }
 
             }
             .padding(24)
+        }
+    }
+
+    private func switchEngine() {
+        isSwitchingEngine = true
+        engineStatus = "Checking downloaded models…"
+        Task {
+            await ModelManager.shared.refreshDownloadedModels()
+            guard !selectedModelVariant.isEmpty,
+                ModelManager.shared.isDownloaded(variant: selectedModelVariant)
+            else {
+                engineStatus =
+                    "Choose a downloaded model for this engine in AI Models. Each engine keeps its own models."
+                isSwitchingEngine = false
+                return
+            }
+            do {
+                try await WhisperService.shared.loadModel(variant: selectedModelVariant)
+                engineStatus = "Ready to transcribe with this engine."
+            } catch {
+                engineStatus = "Unable to load this model: \(error.localizedDescription)"
+            }
+            isSwitchingEngine = false
         }
     }
 
@@ -742,8 +796,7 @@ struct PermissionsSettingsTab: View {
     }
 
     private func openSettings(for pane: String) {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")
-        {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
             NSWorkspace.shared.open(url)
         }
     }

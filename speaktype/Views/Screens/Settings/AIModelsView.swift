@@ -6,16 +6,17 @@ struct AIModelsView: View {
 
     @StateObject private var downloadService = ModelManager.shared
     @AppStorage("selectedModelVariant") private var selectedModel: String = ""
-    @State private var models = AIModel.availableModels
+    @State private var hasRefreshed = false
+    private let models = AIModel.availableModels
 
     // MARK: - Computed Properties
 
     var selectedModelName: String {
-        models.first(where: { $0.variant == selectedModel })?.name ?? "No model downloaded yet"
+        models.first(where: { $0.variant == selectedModel })?.name ?? "No model selected"
     }
 
     private var hasAnyModelDownloaded: Bool {
-        downloadService.downloadProgress.values.contains { $0 >= 1.0 }
+        downloadService.hasAnyDownloadedModel
     }
 
     // MARK: - Body
@@ -25,45 +26,28 @@ struct AIModelsView: View {
             VStack(alignment: .leading, spacing: 24) {
                 headerSection
 
-                // Show setup banner if no model downloaded
-                if !hasAnyModelDownloaded {
-                    setupBanner
-                }
+                if hasRefreshed {
+                    // Show setup banner if no model downloaded
+                    if !hasAnyModelDownloaded {
+                        setupBanner
+                    }
 
-                currentModelCard
-                modelsListSection
+                    currentModelCard
+                    modelsListSection
+                } else {
+                    ProgressView("Checking downloaded models…")
+                        .frame(maxWidth: .infinity, minHeight: 160)
+                }
             }
             .padding(.horizontal, 24)
             .padding(.top, 20)
             .padding(.bottom, 24)
         }
         .background(Color.clear)
-        .onAppear {
-            // Refresh model download status when view appears
-            Task {
-                await downloadService.refreshDownloadedModels()
-
-                // Auto-fallback: If selected model isn't downloaded, switch to first available
-                if !selectedModel.isEmpty {
-                    let isSelectedModelDownloaded =
-                        downloadService.downloadProgress[selectedModel] ?? 0.0 >= 1.0
-
-                    if !isSelectedModelDownloaded {
-                        // Find first downloaded model
-                        if let firstDownloaded = downloadService.downloadProgress.first(where: {
-                            $0.value >= 1.0
-                        })?.key {
-                            print(
-                                "⚠️ Selected model '\(selectedModel)' not found. Auto-switching to '\(firstDownloaded)'"
-                            )
-                            selectedModel = firstDownloaded
-                        } else {
-                            print("⚠️ No models downloaded. Please download a model to use the app.")
-                            selectedModel = ""  // Clear invalid selection
-                        }
-                    }
-                }
-            }
+        .task {
+            await downloadService.refreshDownloadedModels()
+            reconcileSelection()
+            hasRefreshed = true
         }
     }
 
@@ -125,11 +109,34 @@ struct AIModelsView: View {
                 .foregroundStyle(Color.textPrimary)
 
             VStack(spacing: 12) {
-                ForEach($models) { $model in
-                    ModelRow(model: $model, selectedModel: $selectedModel)
+                ForEach(models) { model in
+                    ModelRow(
+                        model: model,
+                        selectedModel: $selectedModel,
+                        onDeleted: { reconcileSelection() }
+                    )
                 }
             }
         }
+    }
+
+    private func reconcileSelection() {
+        selectedModel = Self.reconciledSelection(
+            current: selectedModel,
+            models: models,
+            isDownloaded: downloadService.isDownloaded(variant:)
+        )
+    }
+
+    /// Keep a valid selection. If its files disappeared, choose the first
+    /// downloaded model in visible catalog order rather than Dictionary order.
+    static func reconciledSelection(
+        current: String,
+        models: [AIModel],
+        isDownloaded: (String) -> Bool
+    ) -> String {
+        if !current.isEmpty, isDownloaded(current) { return current }
+        return models.first(where: { isDownloaded($0.variant) })?.variant ?? ""
     }
 
     private var setupBanner: some View {
@@ -144,7 +151,9 @@ struct AIModelsView: View {
                     .foregroundStyle(Color.textPrimary)
 
                 Text(
-                    "Choose a model below to enable voice transcription. We recommend **\(AIModel.recommendedModel(forDeviceRAMGB: WhisperService.deviceRAMGB).name)** for your Mac."
+                    "Choose a model below to enable voice transcription. We recommend "
+                        + "**\(AIModel.recommendedModel(forDeviceRAMGB: WhisperService.deviceRAMGB).name)** "
+                        + "for your Mac."
                 )
                 .font(.system(size: 13))
                 .foregroundStyle(Color.textSecondary)

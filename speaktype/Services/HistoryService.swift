@@ -2,14 +2,14 @@ import Foundation
 import Combine
 import SwiftUI // For IndexSet operations if needed, though Foundation usually covers it, but error says missing import.
 
-struct HistoryStatsEntry: Identifiable, Codable, Hashable {
+nonisolated struct HistoryStatsEntry: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
     let date: Date
     let wordCount: Int
     let duration: TimeInterval
 }
 
-struct HistoryItem: Identifiable, Codable, Hashable {
+nonisolated struct HistoryItem: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
     let date: Date
     let transcript: String
@@ -38,6 +38,14 @@ struct HistoryItem: Identifiable, Codable, Hashable {
         self.detectedLanguage = detectedLanguage
     }
 
+    var wordCount: Int {
+        transcript.split(whereSeparator: { $0.isWhitespace }).count
+    }
+
+    var preview: String {
+        String(transcript.prefix(240))
+    }
+
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
@@ -47,233 +55,122 @@ struct HistoryItem: Identifiable, Codable, Hashable {
     }
 }
 
-class HistoryService: ObservableObject {
+/// The observable facade retains only the newest page of transcripts. Database
+/// work runs on SQLiteHistoryStore's actor and queued mutations preserve call order.
+@MainActor
+final class HistoryService: ObservableObject {
     static let shared = HistoryService()
-    
-    @Published var items: [HistoryItem] = []
+
+    @Published private(set) var items: [HistoryItem] = []
+    @Published private(set) var totalItemCount = 0
     @Published private(set) var statsEntries: [HistoryStatsEntry] = []
-    
-    private let saveKey = "history_items"
-    private let statsSaveKey = "history_stats_entries"
-    
-    private init() {
-        loadStats()
-        loadHistory()
+    @Published private(set) var isLoading = true
+    @Published private(set) var errorMessage: String?
+    @Published private(set) var errorRevision = 0
+    @Published private(set) var revision = 0
+
+    private let store: SQLiteHistoryStore
+    private var pending: Task<Void, Never>?
+
+    init(databaseURL: URL? = nil, defaults: UserDefaults = .standard) {
+        let url = databaseURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("SpeakType", isDirectory: true)
+            .appendingPathComponent("history.sqlite")
+        store = SQLiteHistoryStore(databaseURL: url, defaults: defaults)
+        enqueue { _ in }
     }
-    
-    func addItem(transcript: String, duration: TimeInterval, audioFileURL: URL? = nil, modelUsed: String? = nil, transcriptionTime: TimeInterval? = nil, detectedLanguage: String? = nil) {
-        let normalizedTranscript = WhisperService.normalizedTranscription(from: transcript)
-        guard !normalizedTranscript.isEmpty else { return }
 
-        let timestamp = Date()
-        let wordCount = normalizedTranscript.components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .count
+    func waitUntilReady() async { await pending?.value }
 
-        let newItem = HistoryItem(
-            id: UUID(),
-            date: timestamp,
-            transcript: normalizedTranscript,
-            duration: duration,
-            audioFileURL: audioFileURL,
-            modelUsed: modelUsed,
-            transcriptionTime: transcriptionTime,
-            detectedLanguage: detectedLanguage
-        )
-        let statsEntry = HistoryStatsEntry(
-            id: newItem.id,
-            date: timestamp,
-            wordCount: wordCount,
-            duration: duration
-        )
-        items.insert(newItem, at: 0) // Newest first
-        statsEntries.insert(statsEntry, at: 0)
-        saveHistory()
-        saveStats()
+    /// Waits until every operation queued before this call is durably committed.
+    /// Failure is exposed through errorMessage and never silently discarded.
+    func flush() async { await pending?.value }
+
+    func query(search: String = "", limit: Int = 50, offset: Int = 0) async throws -> HistoryPage {
+        await pending?.value
+        return try await store.query(search: search, limit: limit, offset: offset)
     }
-    
-    /// Replaces an existing item's transcript in place, preserving its id, date,
-    /// duration, and audio file. Used by the History re-transcribe action to
-    /// overwrite a bad transcription with a fresh run of the same recording.
-    /// The matching stats entry's word count is updated so totals stay accurate.
-    func updateTranscript(
-        id: UUID, transcript: String, modelUsed: String? = nil,
-        transcriptionTime: TimeInterval? = nil
-    ) {
-        let normalizedTranscript = WhisperService.normalizedTranscription(from: transcript)
-        guard !normalizedTranscript.isEmpty else { return }
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
 
-        let existing = items[index]
-        items[index] = HistoryItem(
-            id: existing.id,
-            date: existing.date,
-            transcript: normalizedTranscript,
-            duration: existing.duration,
-            audioFileURL: existing.audioFileURL,
-            modelUsed: modelUsed ?? existing.modelUsed,
-            transcriptionTime: transcriptionTime ?? existing.transcriptionTime
-        )
+    func query(search: String = "", limit: Int = 50, after cursor: HistoryCursor) async throws -> HistoryPage {
+        await pending?.value
+        return try await store.query(search: search, limit: limit, after: cursor)
+    }
 
-        if let statsIndex = statsEntries.firstIndex(where: { $0.id == id }) {
-            let existingStat = statsEntries[statsIndex]
-            let wordCount = normalizedTranscript.components(separatedBy: .whitespacesAndNewlines)
-                .filter { !$0.isEmpty }
-                .count
-            statsEntries[statsIndex] = HistoryStatsEntry(
-                id: existingStat.id,
-                date: existingStat.date,
-                wordCount: wordCount,
-                duration: existingStat.duration
-            )
-            saveStats()
-        }
+    func retryLoading() {
+        isLoading = true
+        enqueue { _ in }
+    }
 
-        saveHistory()
+    func addItem(transcript: String, duration: TimeInterval, audioFileURL: URL? = nil,
+                 modelUsed: String? = nil, transcriptionTime: TimeInterval? = nil,
+                 detectedLanguage: String? = nil) {
+        let normalized = WhisperService.normalizedTranscription(from: transcript)
+        guard !normalized.isEmpty else { return }
+        let item = HistoryItem(id: UUID(), date: Date(), transcript: normalized,
+            duration: duration, audioFileURL: audioFileURL, modelUsed: modelUsed,
+            transcriptionTime: transcriptionTime, detectedLanguage: detectedLanguage)
+        enqueue { try await $0.add(item) }
+    }
+
+    func updateTranscript(id: UUID, transcript: String, modelUsed: String? = nil,
+                          transcriptionTime: TimeInterval? = nil) {
+        let normalized = WhisperService.normalizedTranscription(from: transcript)
+        guard !normalized.isEmpty else { return }
+        enqueue { try await $0.update(id: id, transcript: normalized,
+            modelUsed: modelUsed, transcriptionTime: transcriptionTime) }
     }
 
     func deleteItem(at offsets: IndexSet, deleteAudioFile: Bool = true) {
-        let itemsToDelete = offsets.compactMap { items.indices.contains($0) ? items[$0] : nil }
-        items.remove(atOffsets: offsets)
-        if deleteAudioFile {
-            itemsToDelete.forEach(removeAudioFileIfNeeded(for:))
-        }
-        saveHistory()
-    }
-    
-    func deleteItem(id: UUID, deleteAudioFile: Bool = true) {
-        let itemToDelete = items.first { $0.id == id }
-        items.removeAll { $0.id == id }
-        if deleteAudioFile, let itemToDelete {
-            removeAudioFileIfNeeded(for: itemToDelete)
-        }
-        saveHistory()
-    }
-    
-    func clearAll() {
-        items.removeAll()
-        saveHistory()
+        let ids = offsets.compactMap { items.indices.contains($0) ? items[$0].id : nil }
+        for id in ids { deleteItem(id: id, deleteAudioFile: deleteAudioFile) }
     }
 
-    func totalWordCount() -> Int {
-        statsEntries.reduce(0) { $0 + $1.wordCount }
+    func deleteItem(id: UUID, deleteAudioFile: Bool = true) {
+        enqueue { try await $0.delete(id: id, deleteAudioFile: deleteAudioFile) }
     }
-    
-    func transcriptionCount(since startDate: Date? = nil) -> Int {
-        filteredStatsEntries(since: startDate).count
+
+    func clearAll() { enqueue { try await $0.clear() } }
+
+    private func enqueue(_ operation: @escaping @Sendable (SQLiteHistoryStore) async throws -> Void) {
+        let previous = pending
+        let store = store
+        pending = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            do {
+                try await operation(store)
+                let snapshot = try await store.snapshot()
+                self.apply(snapshot)
+                self.errorMessage = nil
+            } catch {
+                // Deleting an audio file can fail after its transcript is already
+                // committed. Reflect durable state while retaining the error.
+                if let snapshot = try? await store.snapshot() { self.apply(snapshot) }
+                self.errorRevision += 1
+                self.errorMessage = error.localizedDescription
+            }
+            self.isLoading = false
+        }
     }
-    
+
+    private func apply(_ snapshot: HistoryStoreSnapshot) {
+        items = snapshot.page.items
+        totalItemCount = snapshot.page.totalCount
+        statsEntries = snapshot.stats
+        revision += 1
+    }
+
+    func totalWordCount() -> Int { statsEntries.reduce(0) { $0 + $1.wordCount } }
+    func transcriptionCount(since startDate: Date? = nil) -> Int { filteredStatsEntries(since: startDate).count }
     func totalDuration(since startDate: Date? = nil) -> TimeInterval {
         filteredStatsEntries(since: startDate).reduce(0) { $0 + $1.duration }
     }
-    
     func wordCount(on day: Date, calendar: Calendar = .current) -> Int {
-        let startOfDay = calendar.startOfDay(for: day)
-        return statsEntries
-            .filter { calendar.isDate($0.date, inSameDayAs: startOfDay) }
-            .reduce(0) { $0 + $1.wordCount }
+        statsEntries.lazy.filter { calendar.isDate($0.date, inSameDayAs: day) }.reduce(0) { $0 + $1.wordCount }
     }
-    
-    func statsEntries(since startDate: Date) -> [HistoryStatsEntry] {
-        filteredStatsEntries(since: startDate)
-    }
-    
-    private func saveHistory() {
-        if let encoded = try? JSONEncoder().encode(items) {
-            UserDefaults.standard.set(encoded, forKey: saveKey)
-        }
-    }
-
-    private func saveStats() {
-        if let encoded = try? JSONEncoder().encode(statsEntries) {
-            UserDefaults.standard.set(encoded, forKey: statsSaveKey)
-        }
-    }
-    
-    private func loadHistory() {
-        if let data = UserDefaults.standard.data(forKey: saveKey),
-           let decoded = try? JSONDecoder().decode([HistoryItem].self, from: data) {
-            let normalizedItems = decoded.compactMap { item -> HistoryItem? in
-                let normalizedTranscript = WhisperService.normalizedTranscription(
-                    from: item.transcript)
-                guard !normalizedTranscript.isEmpty else { return nil }
-
-                guard normalizedTranscript != item.transcript else { return item }
-
-                return HistoryItem(
-                    id: item.id,
-                    date: item.date,
-                    transcript: normalizedTranscript,
-                    duration: item.duration,
-                    audioFileURL: item.audioFileURL,
-                    modelUsed: item.modelUsed,
-                    transcriptionTime: item.transcriptionTime
-                )
-            }
-
-            items = normalizedItems
-
-            if normalizedItems.count != decoded.count
-                || zip(decoded, normalizedItems).contains(where: { $0.transcript != $1.transcript })
-            {
-                saveHistory()
-            }
-
-            migrateStatsIfNeeded(from: normalizedItems)
-        }
-    }
-
-    private func loadStats() {
-        if let data = UserDefaults.standard.data(forKey: statsSaveKey),
-           let decoded = try? JSONDecoder().decode([HistoryStatsEntry].self, from: data) {
-            statsEntries = decoded.sorted { $0.date > $1.date }
-        }
-    }
-    
-    private func migrateStatsIfNeeded(from historyItems: [HistoryItem]) {
-        guard statsEntries.isEmpty, !historyItems.isEmpty else { return }
-
-        statsEntries = historyItems.map { item in
-            HistoryStatsEntry(
-                id: item.id,
-                date: item.date,
-                wordCount: item.transcript
-                    .components(separatedBy: .whitespacesAndNewlines)
-                    .filter { !$0.isEmpty }
-                    .count,
-                duration: item.duration
-            )
-        }
-        saveStats()
-    }
-    
+    func statsEntries(since startDate: Date) -> [HistoryStatsEntry] { filteredStatsEntries(since: startDate) }
     private func filteredStatsEntries(since startDate: Date?) -> [HistoryStatsEntry] {
         guard let startDate else { return statsEntries }
         return statsEntries.filter { $0.date >= startDate }
     }
-
-    private func removeAudioFileIfNeeded(for item: HistoryItem) {
-        guard let audioFileURL = item.audioFileURL else { return }
-        guard FileManager.default.fileExists(atPath: audioFileURL.path) else { return }
-        try? FileManager.default.removeItem(at: audioFileURL)
-    }
-
-#if DEBUG
-    func resetAllDataForTesting() {
-        items = []
-        statsEntries = []
-        UserDefaults.standard.removeObject(forKey: saveKey)
-        UserDefaults.standard.removeObject(forKey: statsSaveKey)
-    }
-
-    /// Re-runs the same load + stats-migration path that `init` performs, but
-    /// against the current UserDefaults contents. Exposed so tests can exercise
-    /// `migrateStatsIfNeeded` (otherwise only reachable from the private init).
-    func reloadFromPersistenceForTesting() {
-        items = []
-        statsEntries = []
-        loadStats()
-        loadHistory()
-    }
-#endif
 }

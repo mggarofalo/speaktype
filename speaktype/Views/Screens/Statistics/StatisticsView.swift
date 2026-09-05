@@ -15,6 +15,7 @@ struct StatisticsView: View {
     @State private var selectedPeriod: StatisticsPeriod = .week
     @State private var timer: Timer? = nil
     @State private var timeTrigger = Date()
+    @State private var summary = HistoryPeriodSummary()
 
     var body: some View {
         ScrollView {
@@ -29,6 +30,20 @@ struct StatisticsView: View {
             .padding(.bottom, 24)
         }
         .background(Color.clear)
+        .task(id: HistorySummaryRequest(revision: historyService.revision, now: timeTrigger, period: selectedPeriod.rawValue)) {
+            let entries = historyService.statsEntries
+            let period = selectedPeriod
+            let now = timeTrigger
+            let calendar = Calendar.current
+            let result = await Task.detached(priority: .userInitiated) {
+                HistoryStatisticsSummary.build(entries, calendar: calendar)
+                    .period(period, now: now, calendar: calendar)
+            }.value
+            guard !Task.isCancelled else { return }
+            summary = result
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in timeTrigger = Date() }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name.NSSystemTimeZoneDidChange)) { _ in timeTrigger = Date() }
         .onAppear {
             startTimer()
         }
@@ -247,123 +262,24 @@ struct StatisticsView: View {
 
     // MARK: - Data Calculations
 
-    private func dailyData(for period: StatisticsPeriod) -> [DailyWordCount] {
-        let calendar = Calendar.current
-        let now = Date()
+    private func dailyData(for period: StatisticsPeriod) -> [DailyWordCount] { summary.data }
 
-        switch period {
-        case .week:
-            let startDate = calendar.date(byAdding: .day, value: -6, to: now)!
-            return generateDailyData(from: startDate, to: now)
-
-        case .month:
-            let startDate = calendar.date(byAdding: .day, value: -29, to: now)!
-            return generateDailyData(from: startDate, to: now)
-
-        case .year:
-            // For Year view, we aggregate by Month
-            let startDate = calendar.date(byAdding: .day, value: -364, to: now)!
-            return generateMonthlyData(from: startDate, to: now)
-        }
-    }
-
-    private func generateDailyData(from startDate: Date, to endDate: Date) -> [DailyWordCount] {
-        let calendar = Calendar.current
-        var dailyCounts: [Date: Int] = [:]
-
-        for entry in historyService.statsEntries(since: startDate) {
-            let day = calendar.startOfDay(for: entry.date)
-            dailyCounts[day, default: 0] += entry.wordCount
-        }
-
-        var result: [DailyWordCount] = []
-        var currentDate = calendar.startOfDay(for: startDate)
-        let end = calendar.startOfDay(for: endDate)
-
-        while currentDate <= end {
-            let count = dailyCounts[currentDate] ?? 0
-            result.append(DailyWordCount(date: currentDate, wordCount: count, isMonthly: false))
-            currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate)!
-        }
-        return result
-    }
-
-    private func generateMonthlyData(from startDate: Date, to endDate: Date) -> [DailyWordCount] {
-        let calendar = Calendar.current
-        var monthlyCounts: [String: Int] = [:]  // Key: "yyyy-MM"
-
-        // Group items by month
-        for entry in historyService.statsEntries(since: startDate) {
-            let components = calendar.dateComponents([.year, .month], from: entry.date)
-            let key = "\(components.year!)-\(components.month!)"
-            monthlyCounts[key, default: 0] += entry.wordCount
-        }
-
-        // Generate last 12 months buckets
-        var result: [DailyWordCount] = []
-        var currentDate = calendar.date(
-            from: calendar.dateComponents([.year, .month], from: startDate))!
-        let end = calendar.date(from: calendar.dateComponents([.year, .month], from: endDate))!
-
-        while currentDate <= end {
-            let components = calendar.dateComponents([.year, .month], from: currentDate)
-            let key = "\(components.year!)-\(components.month!)"
-            let count = monthlyCounts[key] ?? 0
-
-            result.append(DailyWordCount(date: currentDate, wordCount: count, isMonthly: true))
-
-            currentDate = calendar.date(byAdding: .month, value: 1, to: currentDate)!
-        }
-
-        return result
-    }
-
-    private func totalWords(for period: StatisticsPeriod) -> Int {
-        dailyData(for: period).reduce(0) { $0 + $1.wordCount }
-    }
+    private func totalWords(for period: StatisticsPeriod) -> Int { summary.totals.words }
 
     private func dailyAverage(for period: StatisticsPeriod) -> Int {
-        let data = dailyData(for: period)
-        guard !data.isEmpty else { return 0 }
-        return totalWords(for: period) / data.count
+        guard !summary.data.isEmpty else { return 0 }
+        return summary.totals.words / summary.data.count
     }
 
     private func bestDay(for period: StatisticsPeriod) -> Int {
-        dailyData(for: period).map(\.wordCount).max() ?? 0
+        summary.data.map(\.wordCount).max() ?? 0
     }
 
-    private func transcriptionCount(for period: StatisticsPeriod) -> Int {
-        let calendar = Calendar.current
-        let now = Date()
-        let startDate: Date
-
-        switch period {
-        case .week:
-            startDate = calendar.date(byAdding: .day, value: -6, to: now)!
-        case .month:
-            startDate = calendar.date(byAdding: .day, value: -29, to: now)!
-        case .year:
-            startDate = calendar.date(byAdding: .day, value: -364, to: now)!
-        }
-
-        return historyService.transcriptionCount(since: startDate)
-    }
+    private func transcriptionCount(for period: StatisticsPeriod) -> Int { summary.totals.count }
 
     private func formattedDuration(for period: StatisticsPeriod) -> String {
-        let calendar = Calendar.current
-        let now = Date()
-        let startDate: Date
-
-        switch period {
-        case .week:
-            startDate = calendar.date(byAdding: .day, value: -6, to: now)!
-        case .month:
-            startDate = calendar.date(byAdding: .day, value: -29, to: now)!
-        case .year:
-            startDate = calendar.date(byAdding: .day, value: -364, to: now)!
-        }
-
-        var totalSeconds = historyService.totalDuration(since: startDate)
+        let startDate = summary.start
+        var totalSeconds = summary.totals.duration
 
         // Add current recording duration if active
         if audioRecorder.isRecording, let recordingStart = audioRecorder.recordingStartTime {
@@ -392,6 +308,7 @@ struct StatisticsView: View {
 
     private func startTimer() {
         stopTimer()
+        guard audioRecorder.isRecording else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             timeTrigger = Date()
         }
@@ -424,7 +341,7 @@ struct StatisticsView: View {
 
 // MARK: - Supporting Types
 
-enum StatisticsPeriod: String, CaseIterable, Identifiable {
+nonisolated enum StatisticsPeriod: String, CaseIterable, Identifiable, Sendable {
     case week = "Week"
     case month = "Month"
     case year = "Year"
@@ -432,8 +349,8 @@ enum StatisticsPeriod: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-struct DailyWordCount: Identifiable {
-    let id = UUID()
+nonisolated struct DailyWordCount: Identifiable, Sendable {
+    var id: Date { date }
     let date: Date
     let wordCount: Int
     let isMonthly: Bool

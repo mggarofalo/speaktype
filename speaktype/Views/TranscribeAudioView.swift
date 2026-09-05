@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct TranscribeAudioView: View {
     @StateObject private var audioRecorder = AudioRecordingService()
     private var whisperService: WhisperService { WhisperService.shared }
+    @AppStorage("selectedModelVariant") private var selectedModel: String = ""
     @AppStorage("transcriptionLanguage") private var transcriptionLanguage: String = "auto"
     @State private var transcribedText: String = ""
     @State private var isTranscribing = false
@@ -170,13 +171,7 @@ struct TranscribeAudioView: View {
                 print("File selection error: \(error.localizedDescription)")
             }
         }
-        .onAppear {
-            Task {
-                if !whisperService.isInitialized {
-                    try? await whisperService.initialize()
-                }
-            }
-        }
+
     }
     
     private func handleFileSelection(url: URL) {
@@ -237,9 +232,16 @@ struct TranscribeAudioView: View {
     }
     
     private func startTranscription(url: URL) {
+        guard !isTranscribing else { return }
+        isTranscribing = true
         Task {
-            isTranscribing = true
             do {
+                // Load on demand: opening configuration no longer warms the model.
+                let variant = selectedModel.isEmpty ? whisperService.currentModelVariant : selectedModel
+                guard !variant.isEmpty else { throw WhisperService.TranscriptionError.modelNotDownloaded }
+                if !whisperService.isInitialized || whisperService.currentModelVariant != variant {
+                    try await whisperService.loadModel(variant: variant)
+                }
                 transcribedText = try await whisperService.transcribe(audioFile: url, language: transcriptionLanguage)
                 // Save to History
                 let duration = try await getAudioDuration(url: url)
