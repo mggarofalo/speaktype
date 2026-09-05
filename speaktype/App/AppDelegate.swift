@@ -5,6 +5,7 @@ import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var miniRecorderController: MiniRecorderWindowController?
+    private var updateWindow: NSWindow?
     private var globalFlagsMonitor: Any?
     private var localFlagsMonitor: Any?
     private var hotkeyEventTap: CFMachPort?
@@ -59,18 +60,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// runs under default MainActor isolation — parking the main thread while
     /// awaiting main-actor work would deadlock.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let lifecycle = TranscriptionLifecycle.shared
+        guard !lifecycle.isTerminating else { return .terminateLater }
+        // Notification delivery is synchronous on MainActor. Recording views
+        // register their stop/decode/save operation before admission closes.
+        MediaPlaybackService.shared.resumeAfterRecording()
+        NotificationCenter.default.post(name: .finishRecordingForTermination, object: nil)
+        guard lifecycle.beginTermination() else { return .terminateLater }
         Task { @MainActor in
-            await WhisperService.shared.shutdown()
-            await HistoryService.shared.flush()
-            self.replyToTerminateOnce()
+            do {
+                try await lifecycle.finishTermination(
+                    flush: {
+                        await HistoryService.shared.flush()
+                        if let message = HistoryService.shared.errorMessage {
+                            throw NSError(domain: "SpeakType.History", code: 1,
+                                          userInfo: [NSLocalizedDescriptionKey: message])
+                        }
+                    },
+                    shutdown: { await WhisperService.shared.shutdown() }
+                )
+                self.replyToTerminateOnce()
+            } catch {
+                sender.reply(toApplicationShouldTerminate: false)
+                let alert = NSAlert()
+                alert.messageText = "SpeakType could not finish saving history"
+                alert.informativeText = error.localizedDescription
+                alert.addButton(withTitle: "Keep SpeakType Open")
+                alert.runModal()
+            }
         }
-        // Backstop: a transcription in flight serializes ahead of unload() on the
-        // engine actor. Quitting late beats hanging unquittably.
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            await HistoryService.shared.flush()
-            self.replyToTerminateOnce()
-        }
+        // A fixed timeout must not exit while a decode or its save is pending.
         return .terminateLater
     }
 
@@ -377,24 +396,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         Task {
             await updateService.checkForUpdates(silent: true)
-            if updateService.availableUpdate != nil && updateService.shouldShowReminder() {
-                await MainActor.run { self.showUpdateWindow() }
-            }
         }
     }
 
     private func showUpdateWindow() {
         guard let update = UpdateService.shared.availableUpdate else { return }
-
-        let updateSheetView = UpdateSheet(update: update)
-        let hostingController = NSHostingController(rootView: updateSheetView)
-
-        let window = NSWindow(contentViewController: hostingController)
+        let window = updateWindow ?? NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 360),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let updateSheetView = UpdateSheet(update: update, onDismiss: { [weak window] in window?.close() })
+        window.contentViewController = NSHostingController(rootView: updateSheetView)
         window.title = "Software Update"
-        window.styleMask = [.titled, .closable]
         window.isReleasedWhenClosed = false
-        window.center()
         window.isMovableByWindowBackground = true
+        if updateWindow == nil { window.center() }
+        updateWindow = window
+        UpdateService.shared.markReminderShown()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
     }

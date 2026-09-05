@@ -22,11 +22,25 @@ Date/ID ordering is indexed. Search is case- and diacritic-insensitive literal s
 
 [Superwhisper History](https://superwhisper.com/docs/get-started/interface-history) documents search and reprocessing from the history panel. [Wispr Flow history actions](https://docs.wisprflow.ai/articles/4465314211-delete-transcripts-and-history-in-wispr-flow) emphasize quick copy and explicit deletion behavior. SpeakType adopts search, direct copy, and clear action feedback while retaining its local storage and existing deletion semantics.
 
-Separate follow-ups remain in the module: **SPEAKTYPE-6**, align update checking with this repository's tag-only releases; and **SPEAKTYPE-7**, searchable spoken-language selection. Review also identified **SPEAKTYPE-8**, a pre-existing quit-during-transcription race: flushing queued writes cannot save a transcript whose transcription continuation has not queued its save yet. That needs coordinated transcription-task shutdown. These are tracked separately from the initial performance fixes.
+The initial batch merged in [PR #41](https://github.com/mggarofalo/speaktype/pull/41). Its signed Release build was installed and relaunched on September 5; the installed executable matched the built executable and retained the SpeakType Local Dev signature.
+
+## Follow-up implementation
+
+| Plane work | Change |
+| --- | --- |
+| SPEAKTYPE-6 | Checks paginated GitHub repository tags, selects the newest stable semantic version, and shows success/failure in Settings. A single reusable update window links to the tagged source and explains manual installation. Automatic checks remain opt-in; skip/reminder preferences are preserved. |
+| SPEAKTYPE-7 | Search languages by name or code in a popover, navigate results with arrow keys, select with Return and dismiss with Escape. Current selection, recents, auto-detect, per-model preferences and English-only restrictions are preserved. |
+| SPEAKTYPE-8 | Register complete transcription operations before scheduling them; on quit finalize active capture, await transcription and save enqueueing, flush history, then free the engine. Reject new input during termination and prevent simultaneous file import and microphone capture in the file transcription screen. |
+
+The update implementation follows GitHub’s [repository tags endpoint](https://docs.github.com/en/rest/repos/repos#list-repository-tags), including page-based retrieval with up to 100 tags per request.
+
+The shutdown coordinator uses asynchronous AppKit termination and has no forced five-second exit. It can wait for a long decode to finish. If history reports an error, termination is cancelled and an alert keeps the app open. It does not guarantee recovery from all storage failures: existing HistoryService behavior discards failed mutations and clears earlier errors after a later successful write. **SPEAKTYPE-9** tracks retained failed writes, retry ordering and recovery separately.
+
+The follow-up batch passed a signed Release build and **278 unit tests**, with zero failures. SwiftLint across touched files still reports existing line/file-length and empty-count errors; a baseline check against main reproduced them. New service, picker and updater files have no lint errors. Deterministic lifecycle tests suspend operations before execution and between decode/save, check multiple concurrent operations, reject work after termination begins, and verify flush failure prevents engine teardown. Update tests cover semantic ordering, prereleases, pagination, incomplete/empty results, errors and preference behavior. Language tests cover filtering, recents and visual/keyboard ordering. The lifecycle admission guards in SwiftUI were reviewed, but live capture/quit behavior still needs the manual checks below. The installed build remains PR #41 until this follow-up batch is merged and installed.
 
 ## Validation
 
-Final validation passed: signed Release build and all 276 unit tests, zero failures and zero skips. Two independent adversarial reviews completed; their confirmed startup and repeated-error-reporting findings were fixed and revalidated. Targeted SwiftLint reported no errors; existing style and unrelated engine-concurrency warnings remain.
+Initial-batch validation passed: signed Release build and all 276 unit tests, zero failures and zero skips. Two independent adversarial reviews completed; their confirmed startup and repeated-error-reporting findings were fixed and revalidated. Targeted SwiftLint reported no errors; existing style and unrelated engine-concurrency warnings remain.
 
 The real XCTest 10,000-entry synthetic archive measured **314 ms** for encoding/import/setup and **3.3 ms** for a substring search in a Debug test build on this Mac. The facade retained **50 transcripts**. These are observations, not brittle timing assertions or measurements of interactive UI latency. A separate optimized harness using the production store/facade measured 210 ms migration and 4.35 ms search while a main-actor heartbeat continued; its transcription normalization was stubbed, and no audio/model inference was performed.
 
@@ -44,3 +58,8 @@ The agent environment cannot grant the UI runner Accessibility access, so these 
 - Reopen the app; verify migrated history and statistics. Confirm Clear All retains statistics and recordings as described.
 - Open AI Models under each engine; check inventory feedback, model selection, deletion confirmation, and a failed deletion error.
 - Visit General, Transcription, Audio, and Permissions; leave Settings and return; the selected tab should remain. Switch to an engine missing the selected model and confirm visible guidance.
+
+- Search spoken languages by name/code; use arrow keys, Return and Escape; confirm the highlight remains visible and VoiceOver announces selections. Switch to an English-only model and confirm the picker disables.
+- Check for updates manually with normal connectivity and offline; verify visible results, source link, close/skip/reminder actions and a single update window.
+- Quit during microphone capture, model loading, file transcription and history re-transcription; relaunch and verify each successful result was saved. A long decode should delay quit while the app remains responsive.
+- During microphone capture, confirm file upload/drop is unavailable and Stop Recording still works. During file transcription, confirm new recording/import is unavailable.

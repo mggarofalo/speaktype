@@ -2,314 +2,338 @@ import Combine
 import XCTest
 @testable import speaktype
 
-/// Fake release fetcher: returns a canned release or throws a canned error so
-/// the update-decision flow runs without network access.
-final class FakeReleaseFetcher: ReleaseFetching {
-    enum FetchError: Error { case boom }
+@MainActor
+private final class FakeTagFetcher: TagFetching {
+    enum FetchError: Error { case failed }
 
-    var result: Result<GitHubRelease, Error>
+    private let handler: (Int, Int) throws -> [GitHubTag]
+    private(set) var requestedPages: [Int] = []
+    private(set) var requestedPageSizes: [Int] = []
 
-    init(result: Result<GitHubRelease, Error>) {
-        self.result = result
+    init(handler: @escaping (Int, Int) throws -> [GitHubTag]) {
+        self.handler = handler
     }
 
-    func fetchLatestRelease() async throws -> GitHubRelease {
-        try result.get()
+    convenience init(tags: [GitHubTag]) {
+        self.init { page, _ in page == 1 ? tags : [] }
+    }
+
+    func fetchTags(page: Int, perPage: Int) async throws -> [GitHubTag] {
+        requestedPages.append(page)
+        requestedPageSizes.append(perPage)
+        return try handler(page, perPage)
     }
 }
 
 @MainActor
 final class UpdateServiceTests: XCTestCase {
-
-    private let skippedVersionKey = "skippedVersion"
-    private let lastCheckDateKey = "lastUpdateCheckDate"
-    private let lastReminderDateKey = "lastUpdateReminderDate"
-
-    // UserDefaults is shared process state; save and restore the keys this
-    // suite touches so tests stay independent and order-insensitive.
-    private var savedSkipped: Any?
-    private var savedLastCheck: Any?
-    private var savedReminder: Any?
+    private var defaults: UserDefaults!
+    private var defaultsSuiteName: String!
+    private let fixedNow = Date(timeIntervalSince1970: 1_800_000_000)
 
     override func setUp() {
         super.setUp()
-        let defaults = UserDefaults.standard
-        savedSkipped = defaults.object(forKey: skippedVersionKey)
-        savedLastCheck = defaults.object(forKey: lastCheckDateKey)
-        savedReminder = defaults.object(forKey: lastReminderDateKey)
-        defaults.removeObject(forKey: skippedVersionKey)
-        defaults.removeObject(forKey: lastCheckDateKey)
-        defaults.removeObject(forKey: lastReminderDateKey)
+        defaultsSuiteName = "UpdateServiceTests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: defaultsSuiteName)!
+        defaults.removePersistentDomain(forName: defaultsSuiteName)
     }
 
     override func tearDown() {
-        restore(savedSkipped, forKey: skippedVersionKey)
-        restore(savedLastCheck, forKey: lastCheckDateKey)
-        restore(savedReminder, forKey: lastReminderDateKey)
+        defaults.removePersistentDomain(forName: defaultsSuiteName)
+        defaults = nil
+        defaultsSuiteName = nil
         super.tearDown()
     }
 
-    private func restore(_ value: Any?, forKey key: String) {
-        if let value {
-            UserDefaults.standard.set(value, forKey: key)
-        } else {
-            UserDefaults.standard.removeObject(forKey: key)
-        }
+    private func makeService(
+        fetcher: FakeTagFetcher,
+        currentVersion: String = "1.0.0",
+        now: Date? = nil
+    ) -> UpdateService {
+        let checkDate = now ?? fixedNow
+        return UpdateService(
+            tagFetcher: fetcher,
+            defaults: defaults,
+            currentVersion: { currentVersion },
+            now: { checkDate }
+        )
     }
 
-    private func makeVersion(_ v: String, downloadURL: String = "https://example.com/app.dmg")
-        -> AppVersion
-    {
-        AppVersion(
-            version: v, buildNumber: "0", releaseNotes: [], downloadURL: downloadURL,
-            isRequired: false, releaseDate: Date())
+    private func version(_ tag: String) -> AppVersion {
+        AppVersion(tagName: tag)!
     }
 
-    // MARK: - decideUpdate (pure)
-
-    /// Assert the decision surfaced a version with the expected version string.
-    /// `AppVersion` equality includes `releaseDate`, which differs by sub-second
-    /// between the input and any freshly-built expectation, so compare the
-    /// surfaced version itself rather than reconstructing an equal value.
-    private func assertSurfaces(_ decision: UpdateService.UpdateDecision, version: String,
-                                file: StaticString = #filePath, line: UInt = #line) {
-        guard case .surface(let surfaced) = decision else {
-            XCTFail("expected .surface(\(version)), got \(decision)", file: file, line: line)
-            return
-        }
-        XCTAssertEqual(surfaced.version, version, file: file, line: line)
-    }
+    // MARK: - Update decisions
 
     func testDecideUpdateSurfacesNewerVersion() {
         let decision = UpdateService.decideUpdate(
-            releaseVersion: makeVersion("2.0.0"),
+            releaseVersion: version("v2.0.0"),
             currentVersion: "1.0.0",
             skippedVersion: nil,
-            silent: false)
-        assertSurfaces(decision, version: "2.0.0")
+            silent: false
+        )
+
+        guard case .surface(let surfaced) = decision else {
+            return XCTFail("Expected newer version to surface")
+        }
+        XCTAssertEqual(surfaced.version, "2.0.0")
     }
 
-    func testDecideUpdateNoneForEqualVersion() {
-        let decision = UpdateService.decideUpdate(
-            releaseVersion: makeVersion("1.0.0"),
-            currentVersion: "1.0.0",
-            skippedVersion: nil,
-            silent: false)
-        XCTAssertEqual(decision, .none)
+    func testDecideUpdateRejectsEqualAndOlderVersions() {
+        XCTAssertEqual(
+            UpdateService.decideUpdate(
+                releaseVersion: version("v1.0.0"), currentVersion: "1.0.0",
+                skippedVersion: nil, silent: false),
+            .none
+        )
+        XCTAssertEqual(
+            UpdateService.decideUpdate(
+                releaseVersion: version("v0.9.0"), currentVersion: "1.0.0",
+                skippedVersion: nil, silent: false),
+            .none
+        )
     }
 
-    func testDecideUpdateNoneForOlderVersion() {
-        let decision = UpdateService.decideUpdate(
-            releaseVersion: makeVersion("0.9.0"),
-            currentVersion: "1.0.0",
-            skippedVersion: nil,
-            silent: false)
-        XCTAssertEqual(decision, .none)
+    func testSilentCheckSuppressesSkippedVersionButManualCheckSurfacesIt() {
+        let available = version("v2.0.0")
+        XCTAssertEqual(
+            UpdateService.decideUpdate(
+                releaseVersion: available, currentVersion: "1.0.0",
+                skippedVersion: "2.0.0", silent: true),
+            .none
+        )
+
+        guard case .surface = UpdateService.decideUpdate(
+            releaseVersion: available, currentVersion: "1.0.0",
+            skippedVersion: "2.0.0", silent: false
+        ) else {
+            return XCTFail("A user-initiated check should show a skipped version")
+        }
     }
 
-    func testDecideUpdateSilentCheckRespectsSkippedVersion() {
-        let decision = UpdateService.decideUpdate(
-            releaseVersion: makeVersion("2.0.0"),
-            currentVersion: "1.0.0",
-            skippedVersion: "2.0.0",
-            silent: true)
-        XCTAssertEqual(decision, .none,
-                       "a silent check must not surface a version the user skipped")
-    }
-
-    func testDecideUpdateExplicitCheckSurfacesEvenWhenSkipped() {
-        // skip-then-newer-still-surfaces on an explicit (user-initiated) check.
-        let decision = UpdateService.decideUpdate(
-            releaseVersion: makeVersion("2.0.0"),
-            currentVersion: "1.0.0",
-            skippedVersion: "2.0.0",
-            silent: false)
-        // skip-then-newer-still-surfaces on an explicit (user-initiated) check.
-        assertSurfaces(decision, version: "2.0.0")
-    }
-
-    func testDecideUpdateSilentCheckSurfacesDifferentNewerVersionThanSkipped() {
-        // User skipped 2.0.0, but 2.1.0 is out — a silent check should still surface it.
-        let decision = UpdateService.decideUpdate(
-            releaseVersion: makeVersion("2.1.0"),
+    func testSilentCheckSurfacesVersionNewerThanSkippedVersion() {
+        guard case .surface(let surfaced) = UpdateService.decideUpdate(
+            releaseVersion: version("v2.1.0"),
             currentVersion: "1.0.0",
             skippedVersion: "2.0.0",
-            silent: true)
-        assertSurfaces(decision, version: "2.1.0")
+            silent: true
+        ) else {
+            return XCTFail("A later tag should supersede the skipped version")
+        }
+
+        XCTAssertEqual(surfaced.version, "2.1.0")
     }
 
-    // MARK: - checkForUpdates flow (via injected fetcher)
+    // MARK: - Manual status and notification flow
 
-    private func release(tag: String) -> GitHubRelease {
-        GitHubRelease(
-            tagName: tag, body: "notes", htmlUrl: "https://example.com/r",
-            publishedAt: "2026-01-01T00:00:00Z",
-            assets: [GitHubAsset(name: "app.dmg", browserDownloadUrl: "https://example.com/app.dmg")])
+    func testManualCheckSurfacesLatestStableTagAndReportsAvailableStatus() async {
+        let fetcher = FakeTagFetcher(tags: [
+            GitHubTag(name: "v1.5.0"),
+            GitHubTag(name: "v3.0.0-beta.1"),
+            GitHubTag(name: "v2.0.0"),
+        ])
+        let service = makeService(fetcher: fetcher)
+        var surfacedVersions: [String] = []
+        let cancellable = service.showUpdateWindowPublisher
+            .sink { surfacedVersions.append($0.version) }
+
+        await service.checkForUpdates()
+
+        XCTAssertEqual(service.availableUpdate?.version, "2.0.0")
+        XCTAssertEqual(service.checkStatus, .updateAvailable(version: "2.0.0"))
+        XCTAssertEqual(surfacedVersions, ["2.0.0"])
+        XCTAssertEqual(service.lastCheckDate, fixedNow)
+        XCTAssertFalse(service.isCheckingForUpdates)
+        withExtendedLifetime(cancellable) {}
     }
 
-    func testCheckForUpdatesSetsLastCheckDateOnSuccess() async {
-        let fetcher = FakeReleaseFetcher(result: .success(release(tag: "0.0.1")))
-        let service = UpdateService(releaseFetcher: fetcher)
+    func testManualCheckReportsUpToDate() async {
+        let service = makeService(
+            fetcher: FakeTagFetcher(tags: [GitHubTag(name: "v1.0.0")])
+        )
+
+        await service.checkForUpdates()
+
+        XCTAssertNil(service.availableUpdate)
+        XCTAssertEqual(service.checkStatus, .upToDate(version: "1.0.0"))
+        XCTAssertEqual(service.checkStatus?.message, "SpeakType 1.0.0 is up to date.")
+        XCTAssertFalse(service.checkStatus?.isError ?? true)
+    }
+
+    func testManualCheckWithoutStableTagsReportsFailureAndDoesNotStampSuccess() async {
+        let service = makeService(fetcher: FakeTagFetcher(tags: [
+            GitHubTag(name: "nightly"),
+            GitHubTag(name: "v2.0.0-beta.1"),
+        ]))
+
+        await service.checkForUpdates()
+
+        XCTAssertEqual(service.checkStatus, .failed)
+        XCTAssertTrue(service.checkStatus?.isError ?? false)
         XCTAssertNil(service.lastCheckDate)
+        XCTAssertNil(defaults.object(forKey: "lastUpdateCheckDate"))
+    }
 
-        await service.checkForUpdates(silent: true)
+    func testManualFetchFailureReportsFailureAndPreservesKnownUpdate() async {
+        let fetcher = FakeTagFetcher { _, _ in throw FakeTagFetcher.FetchError.failed }
+        let service = makeService(fetcher: fetcher)
+        service.availableUpdate = version("v2.0.0")
 
-        XCTAssertNotNil(service.lastCheckDate, "a successful check stamps lastCheckDate")
+        await service.checkForUpdates()
+
+        XCTAssertEqual(service.checkStatus, .failed)
+        XCTAssertEqual(service.availableUpdate?.version, "2.0.0")
+        XCTAssertNil(service.lastCheckDate)
         XCTAssertFalse(service.isCheckingForUpdates)
     }
 
-    func testCheckForUpdatesNoUpdateForOlderRelease() async {
-        // currentVersion comes from the bundle ("1.0" in tests); 0.0.1 is older.
-        let fetcher = FakeReleaseFetcher(result: .success(release(tag: "0.0.1")))
-        let service = UpdateService(releaseFetcher: fetcher)
-
-        await service.checkForUpdates(silent: false)
-
-        XCTAssertNil(service.availableUpdate,
-                     "an older release must not produce an available update")
-    }
-
-    func testCheckForUpdatesSurfacesNewerRelease() async {
-        let fetcher = FakeReleaseFetcher(result: .success(release(tag: "999.0.0")))
-        let service = UpdateService(releaseFetcher: fetcher)
-
-        await service.checkForUpdates(silent: false)
-
-        XCTAssertEqual(service.availableUpdate?.version, "999.0.0",
-                       "a clearly-newer release surfaces as an available update")
-    }
-
-    func testCheckForUpdatesSilentRespectsSkippedVersion() async {
-        UserDefaults.standard.set("999.0.0", forKey: skippedVersionKey)
-        let fetcher = FakeReleaseFetcher(result: .success(release(tag: "999.0.0")))
-        let service = UpdateService(releaseFetcher: fetcher)
+    func testSilentFailureDoesNotCreateVisibleManualStatus() async {
+        let fetcher = FakeTagFetcher { _, _ in throw FakeTagFetcher.FetchError.failed }
+        let service = makeService(fetcher: fetcher)
 
         await service.checkForUpdates(silent: true)
 
-        XCTAssertNil(service.availableUpdate,
-                     "a silent check must not surface a skipped version")
+        XCTAssertNil(service.checkStatus)
     }
 
-    func testCheckForUpdatesFailedFetchLeavesNoUpdateAndDoesNotCrash() async {
-        let fetcher = FakeReleaseFetcher(result: .failure(FakeReleaseFetcher.FetchError.boom))
-        let service = UpdateService(releaseFetcher: fetcher)
+    // MARK: - Pagination policy
 
-        await service.checkForUpdates(silent: false)
-
-        XCTAssertNil(service.availableUpdate, "a failed fetch must not assert a false update")
-        XCTAssertFalse(service.isCheckingForUpdates, "the checking flag must be reset on failure")
-        XCTAssertNil(service.lastCheckDate, "a failed check must not stamp lastCheckDate")
-    }
-
-    func testCheckForUpdatesIgnoredWhileAlreadyChecking() async {
-        let fetcher = FakeReleaseFetcher(result: .success(release(tag: "999.0.0")))
-        let service = UpdateService(releaseFetcher: fetcher)
-        service.isCheckingForUpdates = true
-
-        await service.checkForUpdates(silent: false)
-
-        // Guard returns early; availableUpdate stays untouched (nil) and the
-        // pre-set flag is left as-is.
-        XCTAssertNil(service.availableUpdate)
-        XCTAssertTrue(service.isCheckingForUpdates)
-    }
-
-    func testCheckForUpdatesPublishesNewerReleaseToWindowPublisher() async {
-        let fetcher = FakeReleaseFetcher(result: .success(release(tag: "999.0.0")))
-        let service = UpdateService(releaseFetcher: fetcher)
-
-        let expectation = expectation(description: "window publisher fires")
-        var cancellables = Set<AnyCancellable>()
-        service.showUpdateWindowPublisher
-            .sink { version in
-                XCTAssertEqual(version.version, "999.0.0")
-                expectation.fulfill()
+    func testCheckFetchesFullPagesUntilShortPageAndSortsAcrossPages() async {
+        let fullFirstPage = [GitHubTag(name: "v1.1.0")]
+            + Array(repeating: GitHubTag(name: "not-a-version"), count: 99)
+        let fetcher = FakeTagFetcher { page, _ in
+            switch page {
+            case 1: return fullFirstPage
+            case 2: return [GitHubTag(name: "v2.0.0"), GitHubTag(name: "v1.9.0")]
+            default: return []
             }
-            .store(in: &cancellables)
+        }
+        let service = makeService(fetcher: fetcher)
 
-        await service.checkForUpdates(silent: false)
-        await fulfillment(of: [expectation], timeout: 1)
+        await service.checkForUpdates()
+
+        XCTAssertEqual(fetcher.requestedPages, [1, 2])
+        XCTAssertEqual(fetcher.requestedPageSizes, [100, 100])
+        XCTAssertEqual(service.availableUpdate?.version, "2.0.0")
     }
 
-    // MARK: - Skip-version persistence
+    func testFullFinalAllowedPageFailsRatherThanClaimingFromTruncatedTags() async {
+        let fetcher = FakeTagFetcher { _, _ in
+            [GitHubTag(name: "v2.0.0")]
+                + Array(repeating: GitHubTag(name: "not-a-version"), count: 99)
+        }
+        let service = makeService(fetcher: fetcher)
 
-    func testSkipVersionPersistsAndClearsAvailableUpdate() {
-        let service = UpdateService(
-            releaseFetcher: FakeReleaseFetcher(result: .success(release(tag: "0.0.1"))))
-        service.availableUpdate = makeVersion("2.0.0")
+        await service.checkForUpdates()
 
-        service.skipVersion("2.0.0")
-
-        XCTAssertEqual(UserDefaults.standard.string(forKey: skippedVersionKey), "2.0.0")
-        XCTAssertNil(service.availableUpdate,
-                     "skipping the surfaced update must clear it from state")
+        XCTAssertEqual(
+            fetcher.requestedPages,
+            Array(1...UpdateService.maximumTagPages)
+        )
+        XCTAssertEqual(service.checkStatus, .failed)
+        XCTAssertNil(service.availableUpdate)
+        XCTAssertNil(service.lastCheckDate)
     }
 
-    func testClearSkippedVersionRemovesPersistedKey() {
-        UserDefaults.standard.set("2.0.0", forKey: skippedVersionKey)
-        let service = UpdateService(
-            releaseFetcher: FakeReleaseFetcher(result: .success(release(tag: "0.0.1"))))
+    // MARK: - Silent checks, skip and reminder preferences
 
-        service.clearSkippedVersion()
+    func testSilentCheckRespectsSkippedVersion() async {
+        defaults.set("2.0.0", forKey: "skippedVersion")
+        let service = makeService(
+            fetcher: FakeTagFetcher(tags: [GitHubTag(name: "v2.0.0")])
+        )
+        var surfacedVersions: [String] = []
+        let cancellable = service.showUpdateWindowPublisher
+            .sink { surfacedVersions.append($0.version) }
 
-        XCTAssertNil(UserDefaults.standard.string(forKey: skippedVersionKey))
+        await service.checkForUpdates(silent: true)
+
+        XCTAssertNil(service.availableUpdate)
+        XCTAssertTrue(surfacedVersions.isEmpty)
+        XCTAssertEqual(service.lastCheckDate, fixedNow)
+        withExtendedLifetime(cancellable) {}
     }
 
-    // MARK: - shouldCheckForUpdates bookkeeping
+    func testSilentCheckPublishesUpdateWhenReminderIsDue() async {
+        let service = makeService(
+            fetcher: FakeTagFetcher(tags: [GitHubTag(name: "v2.0.0")])
+        )
+        var surfacedVersions: [String] = []
+        let cancellable = service.showUpdateWindowPublisher
+            .sink { surfacedVersions.append($0.version) }
 
-    func testShouldCheckForUpdatesTrueWhenNeverChecked() {
-        let service = UpdateService(
-            releaseFetcher: FakeReleaseFetcher(result: .success(release(tag: "0.0.1"))))
-        service.lastCheckDate = nil
-        XCTAssertTrue(service.shouldCheckForUpdates())
+        await service.checkForUpdates(silent: true)
+
+        XCTAssertEqual(surfacedVersions, ["2.0.0"])
+        XCTAssertNil(service.checkStatus)
+        withExtendedLifetime(cancellable) {}
     }
 
-    func testShouldCheckForUpdatesFalseWithinTwentyFourHours() {
-        let service = UpdateService(
-            releaseFetcher: FakeReleaseFetcher(result: .success(release(tag: "0.0.1"))))
-        service.lastCheckDate = Date().addingTimeInterval(-3600)  // 1 hour ago
-        XCTAssertFalse(service.shouldCheckForUpdates())
+    func testSilentCheckDoesNotPublishUpdateWithinReminderInterval() async {
+        defaults.set(fixedNow.addingTimeInterval(-60 * 60), forKey: "lastUpdateReminderDate")
+        let service = makeService(
+            fetcher: FakeTagFetcher(tags: [GitHubTag(name: "v2.0.0")])
+        )
+        var surfacedVersions: [String] = []
+        let cancellable = service.showUpdateWindowPublisher
+            .sink { surfacedVersions.append($0.version) }
+
+        await service.checkForUpdates(silent: true)
+
+        XCTAssertEqual(service.availableUpdate?.version, "2.0.0")
+        XCTAssertTrue(surfacedVersions.isEmpty)
+        withExtendedLifetime(cancellable) {}
     }
 
-    func testShouldCheckForUpdatesTrueAfterTwentyFourHours() {
-        let service = UpdateService(
-            releaseFetcher: FakeReleaseFetcher(result: .success(release(tag: "0.0.1"))))
-        service.lastCheckDate = Date().addingTimeInterval(-25 * 3600)  // 25 hours ago
-        XCTAssertTrue(service.shouldCheckForUpdates())
-    }
-
-    // MARK: - shouldShowReminder bookkeeping
-
-    func testShouldShowReminderFalseWhenNoAvailableUpdate() {
-        let service = UpdateService(
-            releaseFetcher: FakeReleaseFetcher(result: .success(release(tag: "0.0.1"))))
-        service.availableUpdate = nil
-        XCTAssertFalse(service.shouldShowReminder(),
-                       "no reminder when there is no update to remind about")
-    }
-
-    func testShouldShowReminderTrueWhenUpdateAvailableAndNeverReminded() {
-        let service = UpdateService(
-            releaseFetcher: FakeReleaseFetcher(result: .success(release(tag: "0.0.1"))))
-        service.availableUpdate = makeVersion("2.0.0")
-        XCTAssertTrue(service.shouldShowReminder())
-    }
-
-    func testShouldShowReminderFalseWithinTwentyFourHoursOfLastReminder() {
-        UserDefaults.standard.set(Date().addingTimeInterval(-3600), forKey: lastReminderDateKey)
-        let service = UpdateService(
-            releaseFetcher: FakeReleaseFetcher(result: .success(release(tag: "0.0.1"))))
-        service.availableUpdate = makeVersion("2.0.0")
-        XCTAssertFalse(service.shouldShowReminder())
-    }
-
-    func testMarkReminderShownPersistsTimestamp() {
-        let service = UpdateService(
-            releaseFetcher: FakeReleaseFetcher(result: .success(release(tag: "0.0.1"))))
-        XCTAssertNil(UserDefaults.standard.object(forKey: lastReminderDateKey))
+    func testSkipAndReminderUseInjectedDefaultsAndClock() {
+        let service = makeService(
+            fetcher: FakeTagFetcher(tags: [GitHubTag(name: "v2.0.0")])
+        )
+        service.availableUpdate = version("v2.0.0")
 
         service.markReminderShown()
+        XCTAssertEqual(defaults.object(forKey: "lastUpdateReminderDate") as? Date, fixedNow)
 
-        XCTAssertNotNil(UserDefaults.standard.object(forKey: lastReminderDateKey) as? Date)
+        service.skipVersion("2.0.0")
+        XCTAssertEqual(defaults.string(forKey: "skippedVersion"), "2.0.0")
+        XCTAssertNil(service.availableUpdate)
+
+        service.clearSkippedVersion()
+        XCTAssertNil(defaults.string(forKey: "skippedVersion"))
+    }
+
+    // MARK: - Check cadence and opt-in preference
+
+    func testCheckCadenceUsesInjectedClock() {
+        let recent = makeService(
+            fetcher: FakeTagFetcher(tags: []),
+            now: fixedNow
+        )
+        recent.lastCheckDate = fixedNow.addingTimeInterval(-23 * 60 * 60)
+        XCTAssertFalse(recent.shouldCheckForUpdates())
+
+        recent.lastCheckDate = fixedNow.addingTimeInterval(-24 * 60 * 60)
+        XCTAssertTrue(recent.shouldCheckForUpdates())
+    }
+
+    func testAutomaticChecksRequireExplicitOptIn() {
+        let service = makeService(fetcher: FakeTagFetcher(tags: []))
+        XCTAssertFalse(service.isAutomaticCheckEnabled)
+
+        service.isAutomaticCheckEnabled = true
+
+        XCTAssertTrue(defaults.bool(forKey: "autoUpdate"))
+        XCTAssertTrue(service.isAutomaticCheckEnabled)
+    }
+
+    func testAlreadyRunningCheckDoesNotFetchAgain() async {
+        let fetcher = FakeTagFetcher(tags: [GitHubTag(name: "v2.0.0")])
+        let service = makeService(fetcher: fetcher)
+        service.isCheckingForUpdates = true
+
+        await service.checkForUpdates()
+
+        XCTAssertTrue(fetcher.requestedPages.isEmpty)
+        XCTAssertTrue(service.isCheckingForUpdates)
     }
 }

@@ -243,6 +243,10 @@ struct MiniRecorderView: View {
         .onReceive(NotificationCenter.default.publisher(for: .recordingStartRequested)) { _ in
             startRecording()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .finishRecordingForTermination)) { _ in
+            cancelCommit = true
+            if isListening || audioRecorder.isRecording { stopAndTranscribe() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .recordingStopRequested)) { _ in
             stopAndTranscribe()
         }
@@ -389,7 +393,7 @@ struct MiniRecorderView: View {
             return
         }
 
-        Task {
+        TranscriptionLifecycle.shared.perform {
             debugLog("Initializing WhisperService with model: \(selectedModel)")
             do {
                 try await whisperService.loadModel(variant: selectedModel)
@@ -430,6 +434,7 @@ struct MiniRecorderView: View {
     }
 
     private func startRecording() {
+        guard !TranscriptionLifecycle.shared.isTerminating else { return }
         guard !isProcessing else {
             debugLog("Already processing, ignoring start request")
             return
@@ -505,7 +510,7 @@ struct MiniRecorderView: View {
     private func stopAndTranscribe() {
         debugLog("stopAndTranscribe called")
 
-        guard isListening || audioRecorder.isRecording else {
+        guard !isProcessing, isListening || audioRecorder.isRecording else {
             debugLog("Not listening, ignoring duplicate stop request")
             return
         }
@@ -525,7 +530,9 @@ struct MiniRecorderView: View {
             return
         }
 
-        Task {
+        isListening = false
+        isProcessing = true
+        TranscriptionLifecycle.shared.perform {
             let url = await audioRecorder.stopRecording()
             debugLog("stopRecording returned: \(url?.absoluteString ?? "nil")")
 
@@ -533,6 +540,7 @@ struct MiniRecorderView: View {
                 debugLog("No recording URL, cancelling")
                 await MainActor.run {
                     isListening = false
+                    isProcessing = false
                     onCancel?()
                 }
                 return
@@ -557,7 +565,9 @@ struct MiniRecorderView: View {
         cancelCommit = true
 
         if isListening {
-            Task {
+            isListening = false
+            isProcessing = true
+            TranscriptionLifecycle.shared.perform {
                 let url = await audioRecorder.stopRecording()
 
                 await MainActor.run {

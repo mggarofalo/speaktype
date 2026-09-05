@@ -117,14 +117,12 @@ struct GeneralSettingsTab: View {
         WhisperCppTuning.defaultCarryContext
 
     private var recentLanguageCodes: [String] {
-        recentLanguagesString.split(separator: ",").map(String.init).filter { !$0.isEmpty }
+        SpokenLanguagePickerLogic.recentLanguageCodes(from: recentLanguagesString)
     }
 
     private func updateRecentLanguages(code: String) {
-        guard code != "auto" else { return }
-        var recents = recentLanguageCodes.filter { $0 != code }
-        recents.insert(code, at: 0)
-        recentLanguagesString = recents.prefix(5).joined(separator: ",")
+        recentLanguagesString = SpokenLanguagePickerLogic.updatedRecentLanguages(
+            selecting: code, from: recentLanguagesString)
     }
 
     // MARK: - Model-aware language selection
@@ -459,42 +457,11 @@ struct GeneralSettingsTab: View {
                                 .foregroundStyle(
                                     selectedModelIsEnglishOnly ? Color.textMuted : Color.textPrimary)
                             Spacer()
-                            Menu {
-                                Button("Auto-detect spoken language") { setLanguage("auto") }
-                                if !recentLanguageCodes.isEmpty {
-                                    Divider()
-                                    ForEach(recentLanguageCodes, id: \.self) { code in
-                                        if let lang = Self.whisperLanguages.first(where: { $0.code == code }) {
-                                            Button(lang.name) { setLanguage(code) }
-                                        }
-                                    }
-                                }
-                                Divider()
-                                ForEach(Self.whisperLanguages, id: \.code) { lang in
-                                    Button(lang.name) { setLanguage(lang.code) }
-                                }
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Text(
-                                        selectedModelIsEnglishOnly
-                                            ? "English" : displayName(for: effectiveLanguage)
-                                    )
-                                    .font(Typography.bodySmall)
-                                    .foregroundStyle(
-                                        selectedModelIsEnglishOnly ? Color.textMuted : Color.textPrimary)
-                                    Image(systemName: "chevron.up.chevron.down")
-                                        .font(.system(size: 9))
-                                        .foregroundStyle(
-                                            selectedModelIsEnglishOnly
-                                                ? Color.textMuted : Color.textPrimary)
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .background(Color.bgHover)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                            }
-                            .menuStyle(.borderlessButton)
-                            .disabled(selectedModelIsEnglishOnly)
+                            SpokenLanguagePicker(
+                                selectedCode: effectiveLanguage,
+                                recentLanguageCodes: recentLanguageCodes,
+                                isDisabled: selectedModelIsEnglishOnly,
+                                selectLanguage: setLanguage)
                         }
 
                         // The control is inert on a .en model — whisper.cpp emits
@@ -610,6 +577,15 @@ struct GeneralSettingsTab: View {
                             }
                             .buttonStyle(.plain)
                             .disabled(updateService.isCheckingForUpdates)
+                            if let status = updateService.checkStatus {
+                                Text(status.message)
+                                    .font(Typography.bodySmall)
+                                    .foregroundStyle(status.isError ? Color.accentError : Color.textSecondary)
+                                    .accessibilityLabel(status.message)
+                            }
+                            Text("Update checks look for published versions. Installation is manual.")
+                                .font(Typography.captionSmall)
+                                .foregroundStyle(Color.textMuted)
                         }
                     }
                 }
@@ -640,11 +616,6 @@ struct GeneralSettingsTab: View {
             }
             isSwitchingEngine = false
         }
-    }
-
-    private func displayName(for code: String) -> String {
-        if code == "auto" { return "Auto-detect" }
-        return Self.whisperLanguages.first(where: { $0.code == code })?.name ?? code
     }
 
     // All languages supported by Whisper, sorted alphabetically

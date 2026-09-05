@@ -12,6 +12,10 @@ struct TranscribeAudioView: View {
     @State private var isTranscribing = false
     @State private var showFileImporter = false
     
+    private var acceptsNewInput: Bool {
+        !isTranscribing && !audioRecorder.isRecording && !TranscriptionLifecycle.shared.isTerminating
+    }
+
     var body: some View {
         VStack(spacing: 24) {
             // Header
@@ -34,9 +38,11 @@ struct TranscribeAudioView: View {
                     .frame(maxWidth: .infinity, maxHeight: 360)
                     .contentShape(Rectangle())
                     .onTapGesture {
+                        guard acceptsNewInput else { return }
                         showFileImporter = true
                     }
                     .onDrop(of: [.audio, .movie, .fileURL], isTargeted: nil) { providers in
+                        guard acceptsNewInput else { return false }
                         validateAndTranscribe(providers: providers)
                         return true
                     }
@@ -51,6 +57,7 @@ struct TranscribeAudioView: View {
                         .foregroundStyle(Color.textPrimary)
                     
                     Button(action: {
+                        guard acceptsNewInput else { return }
                         showFileImporter = true
                     }) {
                         HStack(spacing: 8) {
@@ -59,6 +66,7 @@ struct TranscribeAudioView: View {
                         }
                     }
                     .buttonStyle(.stSecondary)
+                    .disabled(!acceptsNewInput)
                     
                     Text("or")
                         .font(Typography.bodySmall)
@@ -66,11 +74,7 @@ struct TranscribeAudioView: View {
                     
                     if audioRecorder.isRecording {
                         Button(action: {
-                            Task {
-                                if let url = await audioRecorder.stopRecording() {
-                                    startTranscription(url: url)
-                                }
-                            }
+                            stopAndTranscribeRecording()
                         }) {
                             HStack(spacing: 8) {
                                 Circle()
@@ -96,6 +100,7 @@ struct TranscribeAudioView: View {
                         }
                     } else {
                         Button(action: {
+                            guard acceptsNewInput else { return }
                             audioRecorder.startRecording()
                         }) {
                             HStack(spacing: 8) {
@@ -157,6 +162,9 @@ struct TranscribeAudioView: View {
             Spacer()
         }
         .background(Color.clear)
+        .onReceive(NotificationCenter.default.publisher(for: .finishRecordingForTermination)) { _ in
+            if audioRecorder.isRecording { stopAndTranscribeRecording() }
+        }
         .fileImporter(
             isPresented: $showFileImporter,
             allowedContentTypes: [.audio, .movie],
@@ -175,6 +183,7 @@ struct TranscribeAudioView: View {
     }
     
     private func handleFileSelection(url: URL) {
+        guard acceptsNewInput else { return }
         // Access security scoped resource if needed (for file picker)
         let didStartAccessing = url.startAccessingSecurityScopedResource()
         
@@ -205,6 +214,7 @@ struct TranscribeAudioView: View {
     }
     
     private func validateAndTranscribe(providers: [NSItemProvider]) {
+        guard acceptsNewInput else { return }
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.audio.identifier) || 
                provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
@@ -231,28 +241,42 @@ struct TranscribeAudioView: View {
         }
     }
     
-    private func startTranscription(url: URL) {
-        guard !isTranscribing else { return }
+    private func stopAndTranscribeRecording() {
+        guard !isTranscribing, !TranscriptionLifecycle.shared.isTerminating else { return }
         isTranscribing = true
-        Task {
-            do {
-                // Load on demand: opening configuration no longer warms the model.
-                let variant = selectedModel.isEmpty ? whisperService.currentModelVariant : selectedModel
-                guard !variant.isEmpty else { throw WhisperService.TranscriptionError.modelNotDownloaded }
-                if !whisperService.isInitialized || whisperService.currentModelVariant != variant {
-                    try await whisperService.loadModel(variant: variant)
-                }
-                transcribedText = try await whisperService.transcribe(audioFile: url, language: transcriptionLanguage)
-                // Save to History
-                let duration = try await getAudioDuration(url: url)
-                HistoryService.shared.addItem(transcript: transcribedText, duration: duration, audioFileURL: url)
-            } catch {
-                transcribedText = "Error: \(error.localizedDescription)"
+        TranscriptionLifecycle.shared.perform {
+            defer { isTranscribing = false }
+            if let url = await audioRecorder.stopRecording() {
+                await transcribeAndSave(url: url)
             }
-            isTranscribing = false
         }
     }
-    
+
+    private func startTranscription(url: URL) {
+        // Recheck after an asynchronous drop callback: capture may have started.
+        guard acceptsNewInput else { return }
+        isTranscribing = true
+        TranscriptionLifecycle.shared.perform {
+            defer { isTranscribing = false }
+            await transcribeAndSave(url: url)
+        }
+    }
+
+    private func transcribeAndSave(url: URL) async {
+        do {
+            let variant = selectedModel.isEmpty ? whisperService.currentModelVariant : selectedModel
+            guard !variant.isEmpty else { throw WhisperService.TranscriptionError.modelNotDownloaded }
+            if !whisperService.isInitialized || whisperService.currentModelVariant != variant {
+                try await whisperService.loadModel(variant: variant)
+            }
+            transcribedText = try await whisperService.transcribe(audioFile: url, language: transcriptionLanguage)
+            let duration = try await getAudioDuration(url: url)
+            HistoryService.shared.addItem(transcript: transcribedText, duration: duration, audioFileURL: url)
+        } catch {
+            transcribedText = "Error: \(error.localizedDescription)"
+        }
+    }
+
     private func getAudioDuration(url: URL) async throws -> TimeInterval {
         // Async duration check using AVURLAsset
         let asset = AVURLAsset(url: url)

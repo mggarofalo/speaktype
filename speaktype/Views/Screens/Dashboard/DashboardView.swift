@@ -229,42 +229,27 @@ struct DashboardView: View {
     }
 
     private func startTranscription(url: URL) {
-        Task {
-            isTranscribing = true
+        guard !isTranscribing, !TranscriptionLifecycle.shared.isTerminating else { return }
+        isTranscribing = true
+        TranscriptionLifecycle.shared.perform {
+            defer { isTranscribing = false }
             transcriptionStatus = "Transcribing..."
-
             do {
                 let variant = selectedModel.isEmpty ? whisperService.currentModelVariant : selectedModel
                 guard !variant.isEmpty else { throw WhisperService.TranscriptionError.modelNotDownloaded }
                 if !whisperService.isInitialized || whisperService.currentModelVariant != variant {
                     try await whisperService.loadModel(variant: variant)
                 }
-
                 let text = try await whisperService.transcribe(audioFile: url, language: transcriptionLanguage)
                 let duration = try await getAudioDuration(url: url)
-                let modelName =
-                    AIModel.availableModels.first(where: { $0.variant == selectedModel })?.name
-                    ?? selectedModel
-
-                DispatchQueue.main.async {
-                    historyService.addItem(
-                        transcript: text,
-                        duration: duration,
-                        audioFileURL: url,
-                        modelUsed: modelName,
-                        transcriptionTime: nil
-                    )
-                    transcriptionStatus = "Done!"
-                    isTranscribing = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        transcriptionStatus = ""
-                    }
-                }
+                let modelName = AIModel.availableModels.first(where: { $0.variant == variant })?.name ?? variant
+                // Enqueue before completing the tracked operation, not in a
+                // later DispatchQueue callback that termination could overtake.
+                historyService.addItem(transcript: text, duration: duration,
+                                       audioFileURL: url, modelUsed: modelName)
+                transcriptionStatus = "Done!"
             } catch {
-                DispatchQueue.main.async {
-                    transcriptionStatus = "Error"
-                    isTranscribing = false
-                }
+                transcriptionStatus = "Error: \(error.localizedDescription)"
             }
         }
     }
