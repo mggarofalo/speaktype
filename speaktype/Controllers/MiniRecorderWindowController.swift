@@ -8,6 +8,7 @@ class MiniRecorderWindowController: NSObject {
 
     // Start recording - show panel and begin recording
     func startRecording() {
+        guard !TranscriptionLifecycle.shared.isTerminating else { return }
         // Capture previous app to restore focus later
         lastActiveApp = NSWorkspace.shared.frontmostApplication
 

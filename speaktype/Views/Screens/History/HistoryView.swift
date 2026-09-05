@@ -305,7 +305,7 @@ struct HistoryView: View {
     }
 
     private func retranscribe(_ item: HistoryItem) {
-        guard retranscribingItemID == nil else { return }
+        guard retranscribingItemID == nil, !TranscriptionLifecycle.shared.isTerminating else { return }
         // This action is only available from the expanded audio section.
         guard let audioURL = item.audioFileURL,
               FileManager.default.fileExists(atPath: audioURL.path)
@@ -319,7 +319,7 @@ struct HistoryView: View {
             return
         }
         retranscribingItemID = item.id
-        Task {
+        TranscriptionLifecycle.shared.perform {
             do {
                 if !whisperService.isInitialized || whisperService.currentModelVariant != variant {
                     try await whisperService.loadModel(variant: variant)

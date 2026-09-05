@@ -1,68 +1,84 @@
-import AppKit
 import Combine
 import Foundation
 
-/// Side-effect boundary for fetching the latest release. The production
-/// conformance wraps the GitHub releases API; tests substitute a fake that
-/// returns canned releases (or throws) so the update-decision flow can be
-/// exercised without network access.
-protocol ReleaseFetching {
-    /// Fetch the latest release, or throw if the request/decoding fails.
-    func fetchLatestRelease() async throws -> GitHubRelease
+/// Side-effect boundary for GitHub's repository-tags endpoint.
+protocol TagFetching {
+    func fetchTags(page: Int, perPage: Int) async throws -> [GitHubTag]
 }
 
-/// Service to check for app updates and manage update preferences
+/// Checks source tags for newer stable versions and manages update preferences.
 class UpdateService: ObservableObject {
     static let shared = UpdateService()
+
+    static let tagsPerPage = 100
+    static let maximumTagPages = 10
+
+    enum CheckStatus: Equatable {
+        case updateAvailable(version: String)
+        case upToDate(version: String)
+        case failed
+
+        var message: String {
+            switch self {
+            case .updateAvailable(let version):
+                return "SpeakType \(version) is available."
+            case .upToDate(let version):
+                return "SpeakType \(version) is up to date."
+            case .failed:
+                return "Unable to check for updates. Try again later."
+            }
+        }
+
+        var isError: Bool {
+            if case .failed = self { return true }
+            return false
+        }
+    }
 
     @Published var availableUpdate: AppVersion?
     @Published var isCheckingForUpdates = false
     @Published var lastCheckDate: Date?
+    @Published private(set) var checkStatus: CheckStatus?
 
-    // Install progress state
-    @Published var isInstalling = false
-    @Published var installProgress: Double = 0  // 0.0 – 1.0
-    @Published var installPhase: String = ""
-    @Published var installStatus: String = ""  // human-readable status
-    @Published var installError: String?
-
-    // Publisher to request UI display (e.g. show update window)
+    /// Requests presentation of the informational update window.
     let showUpdateWindowPublisher = PassthroughSubject<AppVersion, Never>()
 
-    // User Defaults keys
     private let lastCheckDateKey = "lastUpdateCheckDate"
     private let skippedVersionKey = "skippedVersion"
-    private let autoUpdateKey = "autoUpdate"
+    private let automaticCheckKey = "autoUpdate"
     private let lastReminderDateKey = "lastUpdateReminderDate"
 
-    private let releaseFetcher: ReleaseFetching
+    private let tagFetcher: TagFetching
+    private let defaults: UserDefaults
+    private let currentVersion: () -> String
+    private let now: () -> Date
 
-    init(releaseFetcher: ReleaseFetching = GitHubReleaseFetcher()) {
-        self.releaseFetcher = releaseFetcher
-        loadLastCheckDate()
+    init(
+        tagFetcher: TagFetching = GitHubTagFetcher(),
+        defaults: UserDefaults = .standard,
+        currentVersion: @escaping () -> String = { AppVersion.currentVersion },
+        now: @escaping () -> Date = Date.init
+    ) {
+        self.tagFetcher = tagFetcher
+        self.defaults = defaults
+        self.currentVersion = currentVersion
+        self.now = now
+        self.lastCheckDate = defaults.object(forKey: lastCheckDateKey) as? Date
     }
 
-    // The project defaults to MainActor isolation, which would give this type a
-    // main-actor-isolated deinit. There is no main-actor state to tear down, and
-    // the back-deployed main-actor deinit path crashes when a non-`shared`
-    // instance is released under test. A nonisolated deinit avoids that hop.
+    // The target defaults to MainActor isolation. This type has no isolated
+    // teardown work, so avoid a back-deployed main-actor deinit hop in tests.
     nonisolated deinit {}
 
     // MARK: - Update Checking
 
-    /// Outcome of evaluating a fetched release against the current build and
-    /// skip preference. `.none` means nothing to surface; `.surface` carries the
-    /// version the UI should present.
     enum UpdateDecision: Equatable {
         case none
         case surface(AppVersion)
     }
 
-    /// Pure decision: given a fetched release version, the current build, the
-    /// skipped version (if any), and whether the check was silent, decide what to
-    /// surface. A newer version surfaces unless it was skipped during a silent
-    /// (background) check — an explicit (non-silent) check always surfaces a
-    /// newer version even if previously skipped.
+    /// A skipped version is suppressed only during a background check. A manual
+    /// check always reports the latest stable tag.
     static func decideUpdate(
         releaseVersion: AppVersion,
         currentVersion: String,
@@ -78,372 +94,175 @@ class UpdateService: ObservableObject {
         return .surface(releaseVersion)
     }
 
-    /// Check for updates from server
     func checkForUpdates(silent: Bool = false) async {
-        guard !isCheckingForUpdates else { return }
+        guard !isCheckingForUpdates else {
+            return
+        }
 
-        await MainActor.run { isCheckingForUpdates = true }
+        isCheckingForUpdates = true
+        if !silent { checkStatus = nil }
 
         do {
-            let release = try await releaseFetcher.fetchLatestRelease()
-            let releaseVersion = AppVersion(from: release)
-            let currentVersion = AppVersion.currentVersion
-            let skipped = UserDefaults.standard.string(forKey: skippedVersionKey)
+            let tags = try await fetchTagPages()
+            let installedVersion = currentVersion()
+            guard let latestVersion = AppVersion.latestStable(from: tags) else {
+                throw GitHubTagError.noStableTags
+            }
 
             let decision = Self.decideUpdate(
-                releaseVersion: releaseVersion,
-                currentVersion: currentVersion,
-                skippedVersion: skipped,
+                releaseVersion: latestVersion,
+                currentVersion: installedVersion,
+                skippedVersion: defaults.string(forKey: skippedVersionKey),
                 silent: silent
             )
 
-            await MainActor.run {
-                switch decision {
-                case .surface(let version):
-                    self.availableUpdate = version
-                    self.showUpdateWindowPublisher.send(version)
-                case .none:
-                    self.availableUpdate = nil
+            switch decision {
+            case .surface(let version):
+                availableUpdate = version
+                if !silent {
+                    checkStatus = .updateAvailable(version: version.version)
+                    showUpdateWindowPublisher.send(version)
+                } else if shouldShowReminder() {
+                    showUpdateWindowPublisher.send(version)
                 }
-                self.isCheckingForUpdates = false
-                self.lastCheckDate = Date()
-                self.saveLastCheckDate()
+            case .none:
+                availableUpdate = nil
+                if !silent { checkStatus = .upToDate(version: installedVersion) }
             }
+
+            lastCheckDate = now()
+            defaults.set(lastCheckDate, forKey: lastCheckDateKey)
+            isCheckingForUpdates = false
         } catch {
-            print("Failed to check for updates: \(error)")
-            await MainActor.run { self.isCheckingForUpdates = false }
+            AppLogger.error("Failed to check GitHub tags", error: error)
+            if !silent { checkStatus = .failed }
+            isCheckingForUpdates = false
         }
     }
 
-    /// Check if enough time has passed since last check (24 hours)
-    func shouldCheckForUpdates() -> Bool {
-        guard let lastCheck = lastCheckDate else { return true }
-        return Date().timeIntervalSince(lastCheck) / 3600 >= 24
+    private func fetchTagPages() async throws -> [GitHubTag] {
+        var allTags: [GitHubTag] = []
+
+        for page in 1...Self.maximumTagPages {
+            let tags = try await tagFetcher.fetchTags(page: page, perPage: Self.tagsPerPage)
+            allTags.append(contentsOf: tags)
+            if tags.count < Self.tagsPerPage { break }
+            if page == Self.maximumTagPages {
+                // A complete final page means more tags may exist. Refuse to make
+                // a version claim from a deliberately truncated repository scan.
+                throw GitHubTagError.pageLimitReached
+            }
+        }
+
+        return allTags
     }
 
-    /// Check if we should show the reminder (every 24 hours)
+    /// Background checks run at most once every 24 hours.
+    func shouldCheckForUpdates() -> Bool {
+        guard let lastCheckDate else {
+            return true
+        }
+
+        return now().timeIntervalSince(lastCheckDate) >= 24 * 60 * 60
+    }
+
+    /// Available updates are reminded at most once every 24 hours.
     func shouldShowReminder() -> Bool {
-        guard availableUpdate != nil else { return false }
-        let lastReminder = UserDefaults.standard.object(forKey: lastReminderDateKey) as? Date
-        guard let lastReminder else { return true }
-        return Date().timeIntervalSince(lastReminder) / 3600 >= 24
+        guard availableUpdate != nil else {
+            return false
+        }
+
+        guard let lastReminder = defaults.object(forKey: lastReminderDateKey) as? Date else {
+            return true
+        }
+
+        return now().timeIntervalSince(lastReminder) >= 24 * 60 * 60
     }
 
     // MARK: - Version Management
 
     func skipVersion(_ version: String) {
-        UserDefaults.standard.set(version, forKey: skippedVersionKey)
+        defaults.set(version, forKey: skippedVersionKey)
         availableUpdate = nil
+        checkStatus = nil
     }
 
     func markReminderShown() {
-        UserDefaults.standard.set(Date(), forKey: lastReminderDateKey)
+        defaults.set(now(), forKey: lastReminderDateKey)
     }
 
     func clearSkippedVersion() {
-        UserDefaults.standard.removeObject(forKey: skippedVersionKey)
+        defaults.removeObject(forKey: skippedVersionKey)
     }
 
-    // MARK: - Persistence
+    // MARK: - Automatic Checks
 
-    private func saveLastCheckDate() {
-        if let date = lastCheckDate {
-            UserDefaults.standard.set(date, forKey: lastCheckDateKey)
-        }
-    }
-
-    private func loadLastCheckDate() {
-        lastCheckDate = UserDefaults.standard.object(forKey: lastCheckDateKey) as? Date
-    }
-
-    // MARK: - Auto Update
-
-    var isAutoUpdateEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: autoUpdateKey) }
-        set { UserDefaults.standard.set(newValue, forKey: autoUpdateKey) }
-    }
-
-    // MARK: - Update Installation
-
-    /// Download the DMG, mount it, copy the .app over the running installation, and relaunch.
-    func installUpdate(url downloadURLString: String) {
-        guard let downloadURL = URL(string: downloadURLString) else {
-            setError("Invalid download URL.")
-            return
-        }
-
-        // If the URL isn't a direct asset (falls back to HTML page), open browser instead.
-        guard downloadURL.pathExtension == "dmg" else {
-            NSWorkspace.shared.open(downloadURL)
-            return
-        }
-
-        Task {
-            await MainActor.run {
-                self.isInstalling = true
-                self.installProgress = 0
-                self.installPhase = "Downloading"
-                self.installStatus = "Preparing download…"
-                self.installError = nil
-            }
-
-            do {
-                // 1. Download DMG with progress
-                let dmgURL = try await downloadWithProgress(from: downloadURL)
-
-                // 2. Verify the DMG before mounting it
-                await MainActor.run {
-                    self.installPhase = "Verifying"
-                    self.installStatus = "Checking downloaded update…"
-                    self.setInstallProgress(0.84)
-                }
-                try verifyDMG(at: dmgURL)
-
-                // 3. Mount the DMG
-                await MainActor.run {
-                    self.installPhase = "Mounting"
-                    self.installStatus = "Opening downloaded update…"
-                    self.setInstallProgress(0.9)
-                }
-                let mountPoint = try mountDMG(at: dmgURL)
-
-                // 4. Find the .app inside the mounted volume
-                await MainActor.run {
-                    self.installPhase = "Installing"
-                    self.installStatus = "Copying new app into place…"
-                    self.setInstallProgress(0.95)
-                }
-                let appInDMG = try findApp(in: mountPoint)
-
-                // 5. Replace the running app
-                try replaceCurrentApp(with: appInDMG)
-
-                // 6. Detach the volume (best-effort)
-                detachDMG(mountPoint: mountPoint)
-
-                // 7. Relaunch
-                await MainActor.run {
-                    self.installPhase = "Relaunching"
-                    self.installStatus = "Finishing update…"
-                    self.setInstallProgress(1)
-                }
-                relaunch()
-
-            } catch {
-                await MainActor.run {
-                    self.isInstalling = false
-                    self.installError = error.localizedDescription
-                    self.installPhase = ""
-                    self.installStatus = ""
-                }
-            }
-        }
-    }
-
-    // MARK: - Private Helpers
-
-    private func downloadWithProgress(from url: URL) async throws -> URL {
-        let (asyncBytes, response) = try await URLSession.shared.bytes(from: url)
-
-        let total = response.expectedContentLength  // may be -1 if unknown
-        let dest = FileManager.default.temporaryDirectory
-            .appendingPathComponent("SpeakType-update-\(UUID().uuidString).dmg")
-
-        FileManager.default.createFile(atPath: dest.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: dest)
-        defer { try? handle.close() }
-
-        var received: Int64 = 0
-        var buffer = Data()
-        buffer.reserveCapacity(1024 * 64)
-        let startedAt = Date()
-
-        for try await byte in asyncBytes {
-            buffer.append(byte)
-            received += 1
-
-            // Flush every 64 KB so the UI moves more smoothly.
-            if buffer.count >= 1024 * 64 {
-                handle.write(buffer)
-                buffer.removeAll(keepingCapacity: true)
-
-                if total > 0 {
-                    let progress = Double(received) / Double(total)
-                    let safeElapsed = max(Date().timeIntervalSince(startedAt), 0.1)
-                    let bytesPerSecond = Double(received) / safeElapsed
-                    await MainActor.run {
-                        self.installPhase = "Downloading"
-                        self.setInstallProgress(progress * 0.8)  // download = 0-80%
-                        self.installStatus =
-                            "\(Self.byteString(received)) of \(Self.byteString(total)) • \(Self.byteString(Int64(bytesPerSecond)))/s • \(Int(progress * 100))%"
-                    }
-                }
-            }
-        }
-
-        // Flush remaining bytes
-        if !buffer.isEmpty { handle.write(buffer) }
-
-        await MainActor.run {
-            self.installPhase = "Verifying"
-            self.setInstallProgress(0.82)
-            self.installStatus = "Download complete. Preparing update…"
-        }
-
-        return dest
-    }
-
-    private func verifyDMG(at dmgURL: URL) throws {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-        proc.arguments = ["verify", dmgURL.path]
-        proc.standardOutput = FileHandle.nullDevice
-        proc.standardError = Pipe()
-        try proc.run()
-        proc.waitUntilExit()
-
-        guard proc.terminationStatus == 0 else {
-            throw UpdateError.verificationFailed
-        }
-    }
-
-    private func mountDMG(at dmgURL: URL) throws -> URL {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-        proc.arguments = ["attach", dmgURL.path, "-nobrowse", "-readonly", "-plist"]
-
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = Pipe()
-        try proc.run()
-        proc.waitUntilExit()
-
-        guard proc.terminationStatus == 0 else {
-            throw UpdateError.mountFailed
-        }
-
-        let plistData = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard
-            let plist = try? PropertyListSerialization.propertyList(from: plistData, format: nil),
-            let dict = plist as? [String: Any],
-            let entities = dict["system-entities"] as? [[String: Any]],
-            let mountEntry = entities.first(where: { $0["mount-point"] != nil }),
-            let mountPath = mountEntry["mount-point"] as? String
-        else {
-            throw UpdateError.mountFailed
-        }
-
-        return URL(fileURLWithPath: mountPath)
-    }
-
-    private func findApp(in mountPoint: URL) throws -> URL {
-        let contents = try FileManager.default.contentsOfDirectory(
-            at: mountPoint,
-            includingPropertiesForKeys: nil
-        )
-        guard let appURL = contents.first(where: { $0.pathExtension == "app" }) else {
-            throw UpdateError.appNotFoundInDMG
-        }
-        return appURL
-    }
-
-    private func replaceCurrentApp(with sourceApp: URL) throws {
-        // Determine destination: where the current bundle lives
-        let runningPath = Bundle.main.bundlePath
-        let destURL = URL(fileURLWithPath: runningPath)
-        let fm = FileManager.default
-
-        // Remove old app
-        if fm.fileExists(atPath: destURL.path) {
-            try fm.removeItem(at: destURL)
-        }
-        // Copy new app
-        try fm.copyItem(at: sourceApp, to: destURL)
-    }
-
-    private func detachDMG(mountPoint: URL) {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-        proc.arguments = ["detach", mountPoint.path, "-force"]
-        proc.standardOutput = FileHandle.nullDevice
-        proc.standardError = FileHandle.nullDevice
-        try? proc.run()
-    }
-
-    private func relaunch() {
-        // Use a shell to wait for the current process to exit, then reopen the app
-        let bundlePath = Bundle.main.bundlePath
-        let pid = ProcessInfo.processInfo.processIdentifier
-
-        let script = """
-            while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done
-            open "\(bundlePath)"
-            """
-
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/bin/sh")
-        proc.arguments = ["-c", script]
-        try? proc.run()
-
-        DispatchQueue.main.async {
-            NSApplication.shared.terminate(nil)
-        }
-    }
-
-    private func setError(_ message: String) {
-        DispatchQueue.main.async {
-            self.installError = message
-            self.isInstalling = false
-            self.installPhase = ""
-            self.installStatus = ""
-        }
-    }
-
-    @MainActor
-    private func setInstallProgress(_ target: Double) {
-        let clamped = min(max(target, installProgress), 1)
-        installProgress = installProgress + (clamped - installProgress) * 0.45
-        if clamped - installProgress < 0.01 {
-            installProgress = clamped
-        }
-    }
-
-    private static func byteString(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    /// This preference is false until the user explicitly enables it.
+    var isAutomaticCheckEnabled: Bool {
+        get { defaults.bool(forKey: automaticCheckKey) }
+        set { defaults.set(newValue, forKey: automaticCheckKey) }
     }
 }
 
-// MARK: - Release Fetching
+// MARK: - Tag Fetching
 
-/// Production conformance: the original GitHub releases-API call, verbatim.
-struct GitHubReleaseFetcher: ReleaseFetching {
-    func fetchLatestRelease() async throws -> GitHubRelease {
-        // Points at this fork, not upstream — an upstream release must never
-        // replace the locally patched build. 404 (no releases) is harmless.
-        let url = URL(
-            string: "https://api.github.com/repos/mggarofalo/speaktype/releases/latest")!
+struct GitHubTagFetcher: TagFetching {
+    private let session: URLSession
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
+
+    func fetchTags(page: Int, perPage: Int) async throws -> [GitHubTag] {
+        guard var components = URLComponents(
+            string: "https://api.github.com/repos/mggarofalo/speaktype/tags"
+        ) else {
+            throw GitHubTagError.invalidRequest
+        }
+
+        components.queryItems = [
+            URLQueryItem(name: "per_page", value: String(perPage)),
+            URLQueryItem(name: "page", value: String(page))
+        ]
+        guard let url = components.url else {
+            throw GitHubTagError.invalidRequest
+        }
+
         var request = URLRequest(url: url)
-        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+        request.setValue("SpeakType", forHTTPHeaderField: "User-Agent")
 
-        let (data, _) = try await URLSession.shared.data(for: request)
-        return try JSONDecoder().decode(GitHubRelease.self, from: data)
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GitHubTagError.invalidResponse
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw GitHubTagError.httpStatus(httpResponse.statusCode)
+        }
+        return try JSONDecoder().decode([GitHubTag].self, from: data)
     }
 }
 
-// MARK: - Errors
-
-enum UpdateError: LocalizedError {
-    case mountFailed
-    case appNotFoundInDMG
-    case copyFailed(String)
-    case verificationFailed
+enum GitHubTagError: LocalizedError {
+    case invalidRequest
+    case invalidResponse
+    case httpStatus(Int)
+    case noStableTags
+    case pageLimitReached
 
     var errorDescription: String? {
         switch self {
-        case .mountFailed: return "Failed to mount the update disk image."
-        case .appNotFoundInDMG: return "Could not find the app inside the downloaded update."
-        case .copyFailed(let msg): return "Failed to install: \(msg)"
-        case .verificationFailed: return "The downloaded update failed verification."
+        case .invalidRequest:
+            return "The tag request could not be created."
+        case .invalidResponse:
+            return "GitHub returned an invalid response."
+        case .httpStatus(let statusCode):
+            return "GitHub returned HTTP \(statusCode)."
+        case .noStableTags:
+            return "GitHub returned no stable version tags."
+        case .pageLimitReached:
+            return "The repository has more tags than the update check can safely inspect."
         }
     }
 }
