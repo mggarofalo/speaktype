@@ -5,6 +5,46 @@ import OSLog
 import Tokenizers
 import WhisperKit
 
+/// Coalesces concurrent work for one key while rejecting a different request.
+/// The shared task owns its cleanup so a waiter resuming late cannot clear a
+/// newer operation, and cancelling a waiter does not cancel the shared work.
+@MainActor
+final class ModelLoadCoordinator {
+    private struct ActiveLoad {
+        let id: UUID
+        let key: WhisperService.ModelLoadKey
+        let task: Task<Void, Error>
+    }
+
+    private var activeLoad: ActiveLoad?
+
+    func run(
+        key: WhisperService.ModelLoadKey,
+        operation: @escaping @MainActor () async throws -> Void
+    ) async throws {
+        if let activeLoad {
+            guard activeLoad.key == key else {
+                throw WhisperService.TranscriptionError.alreadyLoading
+            }
+            try await activeLoad.task.value
+            return
+        }
+
+        let id = UUID()
+        let task = Task { @MainActor in
+            defer { finish(id: id) }
+            try await operation()
+        }
+        activeLoad = ActiveLoad(id: id, key: key, task: task)
+        try await task.value
+    }
+
+    private func finish(id: UUID) {
+        guard activeLoad?.id == id else { return }
+        activeLoad = nil
+    }
+}
+
 @Observable
 class WhisperService {
     // Shared singleton instance - use this everywhere
@@ -67,6 +107,19 @@ class WhisperService {
     /// state and delegates the actual load/transcribe to this engine.
     private let cppEngine = WhisperCppEngine()
 
+    struct ModelLoadKey: Equatable {
+        let engine: TranscriptionEngineKind
+        let variant: String
+    }
+
+    typealias ModelLoader = @MainActor (TranscriptionEngineKind, String) async throws -> Void
+    typealias EngineSelector = @MainActor () -> TranscriptionEngineKind
+
+    private let loadCoordinator = ModelLoadCoordinator()
+    private let modelLoader: ModelLoader?
+    private let engineSelector: EngineSelector
+    private var loadedModelKey: ModelLoadKey?
+
     /// Device RAM in GB (cached on init)
     static let deviceRAMGB: Int = {
         Int(ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024))
@@ -115,8 +168,16 @@ class WhisperService {
         return rate > 0 ? Double(file.length) / rate : 0
     }
 
-    // Init is internal to allow testing, but prefer using .shared in production
-    init() {}
+    // Init is internal to allow testing, but prefer using .shared in production.
+    // The loader seam lets tests exercise load coordination without loading a
+    // multi-gigabyte model; production uses the concrete engines below.
+    init(
+        modelLoader: ModelLoader? = nil,
+        engineSelector: @escaping EngineSelector = { TranscriptionEngineSelection.current }
+    ) {
+        self.modelLoader = modelLoader
+        self.engineSelector = engineSelector
+    }
 
     /// Tears down the whisper.cpp backend ahead of process exit. See
     /// `WhisperCppEngine.unload()` for why this is mandatory rather than tidy.
@@ -134,48 +195,68 @@ class WhisperService {
 
     // Dynamic model loading with optimized WhisperKitConfig
     func loadModel(variant: String) async throws {
-        // whisper.cpp engine path (beta benchmarking): auto-fetch the GGML model
-        // and load it through the native backend. WhisperKit's pipe is unused here.
-        if TranscriptionEngineSelection.current == .whispercpp {
-            guard !isLoading else { throw TranscriptionError.alreadyLoading }
-            // Downloads happen via the model picker (GgmlModelDownloadService), with
-            // progress and without blocking. loadModel only LOADS an already-present
-            // model — never auto-downloads inline (that would hold isLoading across a
-            // multi-hundred-MB download and wedge every other load/switch).
-            guard WhisperCppModelStorage.isDownloaded(variant: variant),
-                let modelURL = WhisperCppModelStorage.modelURL(for: variant)
+        // Capture the route once. A preference change while the model awaits
+        // disk/framework work must not redirect this load midway through.
+        let engine = engineSelector()
+        let key = ModelLoadKey(engine: engine, variant: variant)
+
+        try await loadCoordinator.run(key: key) { [self] in
+            // Check the cache only after admission: another model may already
+            // be queued even though its task has not invalidated readiness yet.
+            guard !isLoaded(key) else { return }
+            try await performLoad(key: key)
+        }
+    }
+
+    private func isLoaded(_ key: ModelLoadKey) -> Bool {
+        guard isInitialized, loadedModelKey == key else { return false }
+        if modelLoader != nil { return true }
+
+        switch key.engine {
+        case .whispercpp:
+            return true
+        case .whisperkit, .mlx:
+            return pipe != nil
+        }
+    }
+
+    private func performLoad(key: ModelLoadKey) async throws {
+        // Validate before invalidating a previously loaded model. Downloads are
+        // handled by the model picker, never by the load/warmup operation.
+        var cppModelURL: URL?
+        if modelLoader == nil, key.engine == .whispercpp {
+            guard WhisperCppModelStorage.isDownloaded(variant: key.variant),
+                let url = WhisperCppModelStorage.modelURL(for: key.variant)
             else {
                 throw TranscriptionError.modelNotDownloaded
             }
-            isLoading = true
-            isInitialized = false
+            cppModelURL = url
+        }
+
+        isLoading = true
+        isInitialized = false
+        loadedModelKey = nil
+        loadingStage = "Preparing model..."
+        defer {
+            isLoading = false
+            loadingStage = ""
+        }
+
+        if let modelLoader {
+            try await modelLoader(key.engine, key.variant)
+        } else if let cppModelURL {
             loadingStage = "Loading whisper.cpp model..."
-            do {
-                try await cppEngine.load(modelPath: modelURL.path)
-                currentModelVariant = variant
-                isInitialized = true
-                isLoading = false
-                loadingStage = ""
-            } catch {
-                isLoading = false
-                loadingStage = ""
-                throw error
-            }
-            return
+            try await cppEngine.load(modelPath: cppModelURL.path)
+        } else {
+            try await loadWhisperKit(variant: key.variant)
         }
 
-        // Already loaded this exact model
-        if isInitialized && variant == currentModelVariant && pipe != nil {
-            print("✅ Model \(variant) already loaded, skipping")
-            return
-        }
+        currentModelVariant = key.variant
+        loadedModelKey = key
+        isInitialized = true
+    }
 
-        // Prevent concurrent loading
-        guard !isLoading else {
-            print("⚠️ Model loading already in progress, skipping")
-            throw TranscriptionError.alreadyLoading
-        }
-
+    private func loadWhisperKit(variant: String) async throws {
         let ramGB = Self.deviceRAMGB
         print("🔄 Initializing WhisperKit with model: \(variant)...")
         print("💻 Device RAM: \(ramGB) GB")
@@ -187,10 +268,6 @@ class WhisperService {
                 "⚠️ WARNING: Model \(variant) recommends \(model.minimumRAMGB)GB+ RAM, device has \(ramGB)GB. Loading may fail or be very slow."
             )
         }
-
-        isLoading = true
-        isInitialized = false
-        loadingStage = "Preparing model..."
 
         // Release existing model to free memory
         if pipe != nil {
@@ -235,14 +312,8 @@ class WhisperService {
                 "⏱️ Model \(variant, privacy: .public) loaded in \(String(format: "%.1f", loadDuration), privacy: .public)s [compute=\(Self.computeUnitsName, privacy: .public)]"
             )
 
-            currentModelVariant = variant
-            isInitialized = true
-            isLoading = false
-            loadingStage = ""
             print("✅ WhisperKit initialized and prewarmed with \(variant)")
         } catch {
-            isLoading = false
-            loadingStage = ""
             print(
                 "❌ Failed to initialize WhisperKit with \(variant): \(error.localizedDescription)")
             throw error

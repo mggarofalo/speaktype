@@ -21,8 +21,8 @@ final class WhisperServiceTests: XCTestCase {
         XCTAssertEqual(service.currentModelVariant, "")
     }
     
-    // Note: detailed loadModel tests require mocking the WhisperKit dependency
-    // which is external. We test the state management around it.
+    // Concurrent model loading is covered by WhisperServiceLoadingTests using
+    // an injected backend, without loading a real model.
 
     func testNormalizedTranscriptionRemovesBlankAudioPlaceholders() {
         let normalized = WhisperService.normalizedTranscription(
