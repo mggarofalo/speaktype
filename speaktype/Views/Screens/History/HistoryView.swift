@@ -87,6 +87,7 @@ struct HistoryView: View {
             }
             .padding(.bottom, 24)
         }
+        .tint(Color.accentPrimary)
         .task { await browser.loadInitialPage() }
         .task(id: browser.searchText) {
             // `.task(id:)` cancels the previous debounce when the query changes.
@@ -154,14 +155,8 @@ struct HistoryView: View {
             if browser.totalCount > 0 {
                 Button(role: .destructive) { showDeleteAlert = true } label: {
                     Label("Clear All", systemImage: "trash")
-                        .font(Typography.labelSmall)
-                        .foregroundStyle(Color.textMuted)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(Color.bgHover)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HistoryActionButtonStyle())
                 .accessibilityLabel("Clear all history")
             }
         }
@@ -527,6 +522,7 @@ private struct ExpandedHistoryContent: View {
                 Button(action: onRetranscribe) {
                     Label(isRetranscribing ? "Re-transcribing…" : "Re-transcribe", systemImage: "arrow.triangle.2.circlepath")
                 }
+                .buttonStyle(HistoryActionButtonStyle())
                 .disabled(isAnyRetranscribing)
                 .accessibilityLabel("Re-transcribe recording")
             }
@@ -544,20 +540,17 @@ private struct ExpandedHistoryContent: View {
         } label: {
             Label("Actions", systemImage: "ellipsis.circle")
         }
+        .menuStyle(.button)
+        .buttonStyle(HistoryActionButtonStyle())
+        .fixedSize()
         .accessibilityLabel("Transcript actions")
     }
 
     private func actionButton(_ title: String, icon: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
         Button(role: role, action: action) {
             Label(title, systemImage: icon)
-                .font(Typography.labelMedium)
-                .foregroundStyle(Color.textSecondary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Color.bgHover)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HistoryActionButtonStyle())
     }
 
     private func playbackSection(_ url: URL) -> some View {
@@ -565,26 +558,43 @@ private struct ExpandedHistoryContent: View {
             Divider()
             WaveformView(audioURL: url, currentTime: $audioPlayer.currentTime, duration: $audioPlayer.duration)
                 .frame(height: 60)
-            HStack {
-                Button {
-                    if audioPlayer.isPlaying { audioPlayer.pause() }
-                    else { audioPlayer.play() }
-                } label: {
-                    Label(audioPlayer.isPlaying ? "Pause" : "Play Audio", systemImage: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    playbackControls(url)
+                    Spacer()
+                    playbackTime
                 }
-                .accessibilityLabel(audioPlayer.isPlaying ? "Pause recording" : "Play recording")
-                Button { NSWorkspace.shared.activateFileViewerSelecting([url]) } label: {
-                    Label("Show in Finder", systemImage: "folder")
+                VStack(alignment: .leading, spacing: 8) {
+                    playbackControls(url)
+                    playbackTime
                 }
-                .accessibilityLabel("Show recording in Finder")
-                Spacer()
-                Text("\(timeText(audioPlayer.currentTime)) / \(timeText(audioPlayer.duration))")
-                    .font(Typography.captionSmall)
-                    .foregroundStyle(Color.textMuted)
-                    .monospacedDigit()
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .buttonStyle(HistoryActionButtonStyle())
         }
     }
+
+    @ViewBuilder private func playbackControls(_ url: URL) -> some View {
+        Button {
+            if audioPlayer.isPlaying { audioPlayer.pause() }
+            else { audioPlayer.play() }
+        } label: {
+            Label(audioPlayer.isPlaying ? "Pause" : "Play Audio", systemImage: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+        }
+        .accessibilityLabel(audioPlayer.isPlaying ? "Pause recording" : "Play recording")
+        Button { NSWorkspace.shared.activateFileViewerSelecting([url]) } label: {
+            Label("Show in Finder", systemImage: "folder")
+        }
+        .accessibilityLabel("Show recording in Finder")
+    }
+
+    private var playbackTime: some View {
+        Text("\(timeText(audioPlayer.currentTime)) / \(timeText(audioPlayer.duration))")
+            .font(Typography.captionSmall)
+            .foregroundStyle(Color.textMuted)
+            .monospacedDigit()
+    }
+
 }
 
 private func durationText(_ duration: TimeInterval) -> String {
