@@ -55,12 +55,6 @@ final class WhisperCppModelStorageTests: XCTestCase {
 
 @MainActor
 final class AIModelDisplaySizeTests: XCTestCase {
-    private let key = TranscriptionEngineSelection.defaultsKey
-
-    override func tearDownWithError() throws {
-        UserDefaults.standard.removeObject(forKey: key)
-    }
-
     /// `size` describes the CoreML tree. On the whisper.cpp default the GGML
     /// file is roughly twice as large for the smaller models, so showing `size`
     /// understated the download by 2×.
@@ -69,13 +63,15 @@ final class AIModelDisplaySizeTests: XCTestCase {
             return XCTFail("missing base.en model")
         }
 
-        UserDefaults.standard.set("whispercpp", forKey: key)
-        XCTAssertEqual(base.displaySize, base.ggmlSize)
-        XCTAssertEqual(base.displaySize, "148 MB")
+        withEnginePreference("whispercpp") {
+            XCTAssertEqual(base.displaySize, base.ggmlSize)
+            XCTAssertEqual(base.displaySize, "148 MB")
+        }
 
-        UserDefaults.standard.set("whisperkit", forKey: key)
-        XCTAssertEqual(base.displaySize, base.size)
-        XCTAssertEqual(base.displaySize, "74 MB")
+        withEnginePreference("whisperkit") {
+            XCTAssertEqual(base.displaySize, base.size)
+            XCTAssertEqual(base.displaySize, "74 MB")
+        }
     }
 
     /// Guards the validation floor against the real upstream file sizes: a
@@ -106,23 +102,33 @@ final class AIModelDisplaySizeTests: XCTestCase {
 
 @MainActor
 final class TranscriptionEngineSelectionTests: XCTestCase {
-    private let key = TranscriptionEngineSelection.defaultsKey
-
-    override func tearDownWithError() throws {
-        UserDefaults.standard.removeObject(forKey: key)
-    }
-
     func testResolvesExplicitlyStoredEngine() {
-        UserDefaults.standard.set("whisperkit", forKey: key)
-        XCTAssertEqual(TranscriptionEngineSelection.current, .whisperkit)
+        withEnginePreference("whisperkit") {
+            XCTAssertEqual(TranscriptionEngineSelection.current, .whisperkit)
+        }
     }
 
     func testUnknownValueFallsBackToWhisperCpp() {
-        UserDefaults.standard.set("nonsense", forKey: key)
-        XCTAssertEqual(TranscriptionEngineSelection.current, .whispercpp)
+        withEnginePreference("nonsense") {
+            XCTAssertEqual(TranscriptionEngineSelection.current, .whispercpp)
+        }
     }
 
     func testDefaultKindIsWhisperCpp() {
         XCTAssertEqual(TranscriptionEngineSelection.defaultKind, .whispercpp)
     }
+}
+
+/// Argument-domain overrides are process-local, so parallel XCTest hosts cannot
+/// overwrite one another's engine selection or the running app's preference.
+@MainActor
+private func withEnginePreference(_ value: String, assertions: () -> Void) {
+    let defaults = UserDefaults.standard
+    let domain = UserDefaults.argumentDomain
+    let original = defaults.volatileDomain(forName: domain)
+    var overrides = original
+    overrides[TranscriptionEngineSelection.defaultsKey] = value
+    defaults.setVolatileDomain(overrides, forName: domain)
+    defer { defaults.setVolatileDomain(original, forName: domain) }
+    assertions()
 }
