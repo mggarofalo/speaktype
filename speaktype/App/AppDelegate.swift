@@ -339,8 +339,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Only SpeakType's own standard quit shortcut preserves active capture.
+    /// A Command-Q sent to another foreground app remains a recording combo cancel.
+    static func preservesRecordingForQuit(
+        characters: String?, modifiers: NSEvent.ModifierFlags, isApplicationActive: Bool
+    ) -> Bool {
+        let shortcutModifiers = modifiers.intersection([.command, .control, .option, .shift])
+        return isApplicationActive && characters?.lowercased() == "q" && shortcutModifiers == .command
+    }
+
     private func handleModifierComboEvent(_ event: NSEvent) {
         guard isHotkeyPressed else { return }
+        guard !Self.preservesRecordingForQuit(
+            characters: event.charactersIgnoringModifiers,
+            modifiers: event.modifierFlags,
+            isApplicationActive: NSApp.isActive
+        ) else { return }
         // Combo-cancel exists for modifier-only hotkeys (#43): the user pressed
         // e.g. ⌘C while their ⌘ hotkey was recording. A chord hotkey already
         // includes a non-modifier key, so this heuristic does not apply.

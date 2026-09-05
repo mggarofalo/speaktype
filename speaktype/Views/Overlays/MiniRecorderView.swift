@@ -414,6 +414,7 @@ struct MiniRecorderView: View {
 
     private func cancelRecording() {
         cancelCommit = true
+        guard !isProcessing, !TranscriptionLifecycle.shared.isTerminating else { return }
 
         guard isListening || audioRecorder.isRecording else {
             isProcessing = false
@@ -421,7 +422,11 @@ struct MiniRecorderView: View {
             return
         }
 
-        Task {
+        // Claim capture synchronously so a quit/stop notification cannot start
+        // a second finalizer while cancellation awaits the writer.
+        isListening = false
+        isProcessing = true
+        TranscriptionLifecycle.shared.perform {
             _ = await audioRecorder.stopRecording(discardOutput: true)
 
             await MainActor.run {
