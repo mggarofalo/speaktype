@@ -7,11 +7,13 @@ import UniformTypeIdentifiers
 struct DashboardView: View {
     @Binding var selection: SidebarItem?
     @StateObject private var historyService = HistoryService.shared
-    @StateObject private var audioRecorder = AudioRecordingService()
+    private var audioRecorder: AudioRecordingService { AudioRecordingService.shared }
+    @State private var summary = HistoryStatisticsSummary()
+    @State private var summaryDate = Date()
     private var whisperService: WhisperService { WhisperService.shared }
     @State private var leftColumnHeight: CGFloat = 0
 
-    @AppStorage("selectedModelVariant") private var selectedModel: String = "openai_whisper-base"
+    @AppStorage("selectedModelVariant") private var selectedModel: String = ""
     @AppStorage("transcriptionLanguage") private var transcriptionLanguage: String = "auto"
     @State private var showFileImporter = false
     @State private var isTranscribing = false
@@ -19,13 +21,11 @@ struct DashboardView: View {
 
     // Computed Metrics
     var transcriptionCountToday: Int {
-        historyService.transcriptionCount(
-            since: Calendar.current.startOfDay(for: Date())
-        )
+        summary.days[Calendar.current.startOfDay(for: summaryDate)]?.count ?? 0
     }
 
     var totalWordsTranscribed: Int {
-        historyService.totalWordCount()
+        summary.total.words
     }
 
     var timeSavedMinutes: Int {
@@ -36,7 +36,7 @@ struct DashboardView: View {
     }
 
     var totalDurationSeconds: TimeInterval {
-        historyService.totalDuration()
+        summary.total.duration
     }
 
     var timeBasedGreeting: String {
@@ -51,13 +51,11 @@ struct DashboardView: View {
 
     var weeklyData: [(day: String, count: Int)] {
         let calendar = Calendar.current
-        let today = Date()
+        let today = summaryDate
         // Last 7 days including today
         return (0..<7).reversed().map { i in
             let date = calendar.date(byAdding: .day, value: -i, to: today) ?? today
-            let count = historyService.statsEntries(since: calendar.startOfDay(for: date))
-                .filter { calendar.isDate($0.date, inSameDayAs: date) }
-                .count
+            let count = summary.days[calendar.startOfDay(for: date)]?.count ?? 0
             let formatter = DateFormatter()
             formatter.dateFormat = "EEE"  // Mon, Tue, Wed
             let dayStr = String(formatter.string(from: date).prefix(3))
@@ -76,7 +74,7 @@ struct DashboardView: View {
                         wordCount: totalWordsTranscribed,
                         timeSaved: timeSavedMinutes,
                         todayCount: transcriptionCountToday,
-                        allTimeCount: historyService.transcriptionCount()
+                        allTimeCount: summary.total.count
                     )
 
                     // Right: Activity Chart Card
@@ -93,7 +91,7 @@ struct DashboardView: View {
                                 .foregroundStyle(Color.textPrimary)
 
                             if !historyService.items.isEmpty {
-                                Text("\(historyService.items.count) total transcriptions")
+                                Text("\(historyService.totalItemCount) total transcriptions")
                                     .font(Typography.caption)
                                     .foregroundStyle(Color.textMuted)
                             }
@@ -127,7 +125,7 @@ struct DashboardView: View {
                                     .font(Typography.bodyMedium)
                                     .foregroundStyle(Color.textPrimary)
 
-                                Text("Press ⌘+Shift+Space to start recording")
+                                Text("Use your recording shortcut to start dictating")
                                     .font(Typography.bodySmall)
                                     .foregroundStyle(Color.textSecondary)
                             }
@@ -166,20 +164,17 @@ struct DashboardView: View {
                 print("File selection error: \(error.localizedDescription)")
             }
         }
-        .onAppear {
-            Task {
-                if !whisperService.isInitialized
-                    || whisperService.currentModelVariant != selectedModel
-                {
-                    try? await whisperService.loadModel(variant: selectedModel)
-                }
-            }
+        .task(id: HistorySummaryRequest(revision: historyService.revision, now: summaryDate)) {
+            let entries = historyService.statsEntries
+            let calendar = Calendar.current
+            let result = await Task.detached(priority: .userInitiated) {
+                HistoryStatisticsSummary.build(entries, calendar: calendar)
+            }.value
+            guard !Task.isCancelled else { return }
+            summary = result
         }
-        .onChange(of: selectedModel) {
-            Task {
-                try? await whisperService.loadModel(variant: selectedModel)
-            }
-        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in summaryDate = Date() }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name.NSSystemTimeZoneDidChange)) { _ in summaryDate = Date() }
     }
 
     // MARK: - Helpers
@@ -239,7 +234,11 @@ struct DashboardView: View {
             transcriptionStatus = "Transcribing..."
 
             do {
-                if !whisperService.isInitialized { try? await whisperService.initialize() }
+                let variant = selectedModel.isEmpty ? whisperService.currentModelVariant : selectedModel
+                guard !variant.isEmpty else { throw WhisperService.TranscriptionError.modelNotDownloaded }
+                if !whisperService.isInitialized || whisperService.currentModelVariant != variant {
+                    try await whisperService.loadModel(variant: variant)
+                }
 
                 let text = try await whisperService.transcribe(audioFile: url, language: transcriptionLanguage)
                 let duration = try await getAudioDuration(url: url)

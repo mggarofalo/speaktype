@@ -61,12 +61,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task { @MainActor in
             await WhisperService.shared.shutdown()
+            await HistoryService.shared.flush()
             self.replyToTerminateOnce()
         }
         // Backstop: a transcription in flight serializes ahead of unload() on the
         // engine actor. Quitting late beats hanging unquittably.
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await HistoryService.shared.flush()
             self.replyToTerminateOnce()
         }
         return .terminateLater

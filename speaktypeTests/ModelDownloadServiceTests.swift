@@ -4,8 +4,7 @@ import XCTest
 /// In-memory fake for the model-cache filesystem seam. Models a flat map from
 /// directory URL to its immediate children, plus a per-directory total size.
 /// Records removals so cleanup logic can be verified without touching disk.
-@MainActor
-final class FakeModelFileSystem: ModelFileSystem {
+nonisolated final class FakeModelFileSystem: ModelFileSystem, @unchecked Sendable {
     /// Immediate children keyed by directory URL.
     var children: [URL: [URL]] = [:]
     /// Recursive total size keyed by directory URL.
@@ -87,46 +86,6 @@ final class ModelDownloadServiceTests: XCTestCase {
             ModelDownloadService.isModelComplete(directorySize: 1_500, expectedSize: 1_000))
     }
 
-    // MARK: - Pure decision logic: variant-name parsing
-
-    func testModelNameStripsSlashOwnerPrefix() {
-        XCTAssertEqual(
-            ModelDownloadService.modelName(for: "openai/whisper-medium"), "whisper-medium")
-    }
-
-    func testModelNameLeavesUnderscoreVariantUnchanged() {
-        XCTAssertEqual(
-            ModelDownloadService.modelName(for: "openai_whisper-medium"), "openai_whisper-medium")
-    }
-
-    func testCleanupPatternsCoversBareNameAndUnderscoreForm() {
-        let patterns = ModelDownloadService.cleanupPatterns(for: "openai/whisper-medium")
-        XCTAssertEqual(patterns, ["whisper-medium", "openai_whisper-medium"])
-    }
-
-    // MARK: - Pure decision logic: cleanup pattern matching
-
-    func testMatchesCleanupPatternByBareModelName() {
-        let patterns = ModelDownloadService.cleanupPatterns(for: "openai_whisper-medium")
-        XCTAssertTrue(
-            ModelDownloadService.matchesCleanupPattern(
-                "models--openai_whisper-medium", patterns: patterns))
-    }
-
-    func testMatchesCleanupPatternByDoubleDashHubForm() {
-        // HF hub uses "owner--repo" folder names; the slash form is normalised to "--".
-        let patterns = ModelDownloadService.cleanupPatterns(for: "openai/whisper-medium")
-        XCTAssertTrue(
-            ModelDownloadService.matchesCleanupPattern(
-                "models--openai--whisper-medium", patterns: patterns))
-    }
-
-    func testMatchesCleanupPatternFalseForUnrelatedName() {
-        let patterns = ModelDownloadService.cleanupPatterns(for: "openai_whisper-medium")
-        XCTAssertFalse(
-            ModelDownloadService.matchesCleanupPattern("whisper-tiny", patterns: patterns))
-    }
-
     // MARK: - refreshDownloadedModels via the filesystem seam
 
     private let whisperKitURL = ModelStorage.whisperKitModelsURL
@@ -138,6 +97,24 @@ final class ModelDownloadServiceTests: XCTestCase {
     /// Seed one complete model directory in the fake and run a refresh.
     private func makeServiceWithModels(_ fake: FakeModelFileSystem) -> ModelDownloadService {
         ModelDownloadService(fileSystem: fake)
+    }
+
+    func testInitializationBootstrapsInitialInventory() async {
+        let fake = FakeModelFileSystem()
+        let model = modelURL("openai_whisper-tiny")
+        fake.existingDirectories.insert(whisperKitURL)
+        fake.children[whisperKitURL] = [model]
+        fake.children[model] = [
+            model.appendingPathComponent("config.json"),
+            model.appendingPathComponent("AudioEncoder.mlmodelc")
+        ]
+        fake.sizes[model] = 25_000_000
+
+        let service = makeServiceWithModels(fake)
+        await service.ensureInventoryReady()
+
+        XCTAssertTrue(service.isInventoryReady)
+        XCTAssertEqual(service.downloadProgress["openai_whisper-tiny"], 1.0)
     }
 
     func testRefreshMarksCompleteModelAsDownloaded() async {
@@ -233,26 +210,40 @@ final class ModelDownloadServiceTests: XCTestCase {
         XCTAssertTrue(service.downloadProgress.isEmpty)
     }
 
+    func testScanIgnoresUnknownDirectoriesEvenWhenTheyLookComplete() {
+        let fake = FakeModelFileSystem()
+        let unknown = modelURL("another-app-model")
+        fake.existingDirectories.insert(whisperKitURL)
+        fake.children[whisperKitURL] = [unknown]
+        fake.children[unknown] = [
+            unknown.appendingPathComponent("config.json"),
+            unknown.appendingPathComponent("Model.mlmodelc"),
+        ]
+        fake.sizes[unknown] = 2_000_000_000
+
+        let found = ModelDownloadService.scanDownloadedModels(
+            fileSystem: fake,
+            rootURL: whisperKitURL,
+            expectedSizes: ["openai_whisper-tiny": 30_000_000]
+        )
+
+        XCTAssertTrue(found.isEmpty)
+    }
+
     // MARK: - deleteModel via the filesystem seam
 
-    func testDeleteModelRemovesMatchingCacheEntries() async {
+    func testDeleteModelRemovesOnlyExactSpeakTypeModelDirectory() async {
         let fake = FakeModelFileSystem()
-        // Seed an HF-style cache dir under Application Support with a matching folder.
-        let appSupport = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let hfModels = appSupport.appendingPathComponent("huggingface/models")
-        let match = hfModels.appendingPathComponent("models--openai_whisper-medium")
-        let unrelated = hfModels.appendingPathComponent("models--openai_whisper-tiny")
-        fake.children[hfModels] = [match, unrelated]
+        let target = ModelStorage.modelFolderURL(variant: "openai_whisper-medium")
+        let unrelated = ModelStorage.modelFolderURL(variant: "openai_whisper-tiny")
+        fake.existingDirectories.formUnion([target, unrelated])
 
         let service = ModelDownloadService(fileSystem: fake)
         let result = await service.deleteModel(variant: "openai_whisper-medium")
 
-        XCTAssertTrue(fake.removedURLs.contains(match),
-                      "the matching cache folder should be removed")
-        XCTAssertFalse(fake.removedURLs.contains(unrelated),
-                       "an unrelated model's cache must not be touched")
-        XCTAssertTrue(result.hasPrefix("Deleted"), "result summary reports deletions: \(result)")
+        XCTAssertEqual(fake.removedURLs, [target])
+        XCTAssertFalse(fake.removedURLs.contains(unrelated))
+        XCTAssertTrue(result.hasPrefix("Removed"), "result summary reports deletion: \(result)")
     }
 
     func testDeleteModelReportsNoMatchWhenNothingFound() async {
@@ -262,7 +253,20 @@ final class ModelDownloadServiceTests: XCTestCase {
         let result = await service.deleteModel(variant: "openai_whisper-medium")
 
         XCTAssertTrue(fake.removedURLs.isEmpty)
-        XCTAssertTrue(result.hasPrefix("No match"), "result summary reports no match: \(result)")
+        XCTAssertTrue(
+            result.hasPrefix("No downloaded files"),
+            "result summary reports no files: \(result)"
+        )
+    }
+
+    func testDeleteUnknownVariantDoesNotTouchDisk() async {
+        let fake = FakeModelFileSystem()
+        let service = ModelDownloadService(fileSystem: fake)
+
+        let result = await service.deleteModel(variant: "not-a-real-model")
+
+        XCTAssertTrue(fake.removedURLs.isEmpty)
+        XCTAssertTrue(result.hasPrefix("Unknown model"))
     }
 
     // MARK: - download bookkeeping

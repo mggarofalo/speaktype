@@ -459,6 +459,27 @@ struct MiniRecorderView: View {
             return
         }
 
+        // The CoreML catalog is loaded lazily and scanned off the main actor.
+        // During the brief startup window, avoid misreporting an installed model
+        // as missing. A hold-to-record gesture may already have ended by the time
+        // the scan finishes, so ask for a fresh hotkey press instead of starting
+        // a recording after the user's release.
+        let modelManager = ModelManager.shared
+        guard modelManager.isActiveInventoryReady else {
+            debugLog("Model inventory still loading")
+            isProcessing = true
+            statusMessage = "Checking downloaded models…"
+
+            Task { @MainActor in
+                await modelManager.ensureActiveInventoryReady()
+                statusMessage = "Ready — press the hotkey again"
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                isProcessing = false
+                onCancel?()
+            }
+            return
+        }
+
         // Check if model is downloaded (engine-aware — the whisper.cpp models
         // live in their own store and are invisible to ModelDownloadService).
         guard ModelManager.shared.isDownloaded(variant: selectedModel) else {

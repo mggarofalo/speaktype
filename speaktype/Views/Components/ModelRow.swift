@@ -2,8 +2,9 @@ import SwiftUI
 
 /// Reusable component for displaying a single AI model in the models list
 struct ModelRow: View {
-    @Binding var model: AIModel
+    let model: AIModel
     @Binding var selectedModel: String
+    var onDeleted: () -> Void = {}
     @ObservedObject var downloadService = ModelManager.shared
 
     // Use the shared WhisperService for loading state
@@ -15,6 +16,7 @@ struct ModelRow: View {
     @State private var loadingStartTime: Date?
     @State private var loadingElapsed: TimeInterval = 0
     @State private var loadingTimer: Timer?
+    @State private var showDeleteConfirmation = false
 
     // MARK: - Computed Properties
 
@@ -95,12 +97,12 @@ struct ModelRow: View {
                         .foregroundStyle(Color.orange)
                     }
 
-                    // Load error display
-                    if let loadError = loadError {
+                    // Load/download/delete error display
+                    if let actionError = loadError ?? downloadError {
                         HStack(spacing: 4) {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.system(size: 10))
-                            Text(loadError)
+                            Text(actionError)
                                 .font(.system(size: 11))
                                 .lineLimit(2)
                         }
@@ -129,6 +131,19 @@ struct ModelRow: View {
                     lineWidth: 1)
         )
         .cardShadow()
+        .confirmationDialog(
+            "Delete \(model.name)?",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Model", role: .destructive) {
+                deleteModel()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the downloaded model files from this Mac.")
+        }
+        .onDisappear(perform: stopLoadingTimer)
     }
 
     // MARK: - Subviews
@@ -255,11 +270,7 @@ struct ModelRow: View {
                 }
             }
 
-            Button(action: {
-                Task {
-                    _ = await downloadService.deleteModel(variant: model.variant)
-                }
-            }) {
+            Button(action: { showDeleteConfirmation = true }) {
                 Image(systemName: "trash")
                     .font(.system(size: 13))
                     .foregroundStyle(Color.textMuted)
@@ -309,6 +320,18 @@ struct ModelRow: View {
     }
 
     // MARK: - Model Loading
+
+    private func deleteModel() {
+        Task {
+            loadError = nil
+            let result = await downloadService.deleteModel(variant: model.variant)
+            if result.hasPrefix("Failed") {
+                loadError = result
+            }
+            await downloadService.refreshDownloadedModels()
+            onDeleted()
+        }
+    }
 
     /// Load the model into memory before selecting it
     private func loadAndSelectModel() {
@@ -400,7 +423,7 @@ private struct RatingDots: View {
 #Preview {
     VStack(spacing: 16) {
         ModelRow(
-            model: .constant(AIModel.availableModels[0]),
+            model: AIModel.availableModels[0],
             selectedModel: .constant("openai_whisper-base")
         )
     }

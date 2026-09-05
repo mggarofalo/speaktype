@@ -3,6 +3,8 @@ import SwiftUI
 
 struct MenuBarDashboardView: View {
     @StateObject private var historyService = HistoryService.shared
+    @State private var summary = HistoryStatisticsSummary()
+    @State private var summaryDate = Date()
 
     let openDashboard: () -> Void
     let quit: () -> Void
@@ -13,15 +15,15 @@ struct MenuBarDashboardView: View {
     ]
 
     private var todayCount: Int {
-        historyService.transcriptionCount(since: Calendar.current.startOfDay(for: Date()))
+        summary.days[Calendar.current.startOfDay(for: summaryDate)]?.count ?? 0
     }
 
     private var totalCount: Int {
-        historyService.transcriptionCount()
+        summary.total.count
     }
 
     private var totalWords: Int {
-        historyService.totalWordCount()
+        summary.total.words
     }
 
     private var timeSavedMinutes: Int {
@@ -41,6 +43,17 @@ struct MenuBarDashboardView: View {
         }
         .padding(16)
         .frame(width: 388)
+        .task(id: HistorySummaryRequest(revision: historyService.revision, now: summaryDate)) {
+            let entries = historyService.statsEntries
+            let calendar = Calendar.current
+            let result = await Task.detached(priority: .userInitiated) {
+                HistoryStatisticsSummary.build(entries, calendar: calendar)
+            }.value
+            guard !Task.isCancelled else { return }
+            summary = result
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in summaryDate = Date() }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name.NSSystemTimeZoneDidChange)) { _ in summaryDate = Date() }
     }
 
     private var header: some View {
@@ -272,7 +285,7 @@ private struct MenuBarTranscriptRow: View {
                     .frame(width: 24, height: 24)
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(item.transcript.isEmpty ? "Empty transcription" : item.transcript)
+                    Text(item.transcript.isEmpty ? "Empty transcription" : item.preview)
                         .font(Typography.bodySmall)
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(2)

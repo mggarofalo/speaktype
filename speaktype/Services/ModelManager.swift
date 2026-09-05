@@ -20,21 +20,34 @@ protocol ModelCatalogService: AnyObject {
 class ModelManager: ObservableObject {
     static let shared = ModelManager()
 
-    let whisperKit = ModelDownloadService.shared
     let ggml = GgmlModelDownloadService.shared
 
+    private var whisperKitStorage: ModelDownloadService?
     private var cancellables = Set<AnyCancellable>()
 
     init() {
-        whisperKit.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &cancellables)
-        ggml.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &cancellables)
+        observe(ggml)
     }
 
     nonisolated deinit {}
+
+    /// The CoreML catalog is expensive to construct because it owns the
+    /// WhisperKit cache. Keep it out of the default whisper.cpp launch path and
+    /// create it only if the user selects WhisperKit.
+    var whisperKit: ModelDownloadService {
+        if let whisperKitStorage { return whisperKitStorage }
+
+        let service = ModelDownloadService.shared
+        whisperKitStorage = service
+        observe(service)
+        return service
+    }
+
+    private func observe(_ service: some ObservableObject) {
+        service.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+    }
 
     /// The catalog service for the currently selected engine.
     var active: any ModelCatalogService {
@@ -44,6 +57,20 @@ class ModelManager: ObservableObject {
     var downloadProgress: [String: Double] { active.downloadProgress }
     var isDownloading: [String: Bool] { active.isDownloading }
     var downloadError: [String: String] { active.downloadError }
+
+    /// whisper.cpp checks its single model files directly. WhisperKit builds an
+    /// asynchronous inventory the first time its lazy catalog is used.
+    var isActiveInventoryReady: Bool {
+        TranscriptionEngineSelection.current == .whispercpp || whisperKit.isInventoryReady
+    }
+
+    func ensureActiveInventoryReady() async {
+        guard TranscriptionEngineSelection.current == .whisperkit else {
+            return
+        }
+
+        await whisperKit.ensureInventoryReady()
+    }
 
     /// Whether `variant` is present on disk for the *currently selected* engine.
     ///
@@ -55,7 +82,10 @@ class ModelManager: ObservableObject {
     /// which is populated by an async refresh and is therefore empty during the
     /// window right after launch.
     func isDownloaded(variant: String) -> Bool {
-        guard !variant.isEmpty else { return false }
+        guard !variant.isEmpty else {
+            return false
+        }
+
         if TranscriptionEngineSelection.current == .whispercpp {
             return WhisperCppModelStorage.isDownloaded(variant: variant)
         }
