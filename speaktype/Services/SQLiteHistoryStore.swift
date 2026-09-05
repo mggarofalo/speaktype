@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import Darwin
 
 nonisolated struct HistoryPage: Sendable {
     let items: [HistoryItem]
@@ -85,6 +86,31 @@ actor SQLiteHistoryStore {
         if !hasReferenceDate { try execute("ALTER TABLE stats ADD COLUMN reference_date REAL") }
         try execute("CREATE INDEX IF NOT EXISTS stats_date ON stats(date DESC)")
         try execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        try execute("""
+            CREATE TABLE IF NOT EXISTS applied_history_operations (
+                id TEXT PRIMARY KEY,
+                applied_at REAL NOT NULL,
+                audio_path TEXT,
+                audio_device INTEGER,
+                audio_inode INTEGER,
+                audio_birth_seconds INTEGER,
+                audio_birth_nanoseconds INTEGER,
+                audio_cleanup_done INTEGER NOT NULL DEFAULT 0)
+            """)
+        let operationColumns: [(String, String)] = [
+            ("audio_path", "TEXT"),
+            ("audio_device", "INTEGER"),
+            ("audio_inode", "INTEGER"),
+            ("audio_birth_seconds", "INTEGER"),
+            ("audio_birth_nanoseconds", "INTEGER"),
+            ("audio_cleanup_done", "INTEGER NOT NULL DEFAULT 0")
+        ]
+        for (name, declaration) in operationColumns {
+            let exists = try hasColumn(name, in: "applied_history_operations")
+            if !exists {
+                try execute("ALTER TABLE applied_history_operations ADD COLUMN \(name) \(declaration)")
+            }
+        }
         try migrateLegacyIfNeeded()
         cachedStats = try readStats()
         initialized = true
@@ -120,6 +146,14 @@ actor SQLiteHistoryStore {
         return try HistoryStoreSnapshot(page: query(limit: 50), stats: cachedStats)
     }
 
+    /// Another app instance may commit while this store is limited to read-only
+    /// browsing by the recovery-journal lease. Refresh once when ownership later
+    /// transfers, before applying this instance's retained mutations.
+    func reloadCachedStats() throws {
+        try initialize()
+        cachedStats = try readStats()
+    }
+
     func query(search: String = "", limit: Int = 50, offset: Int = 0,
                after cursor: HistoryCursor? = nil) throws -> HistoryPage {
         try initialize()
@@ -152,57 +186,284 @@ actor SQLiteHistoryStore {
         return HistoryPage(items: items, totalCount: total)
     }
 
-    func add(_ item: HistoryItem) throws {
+    /// Applies a mutation and records its operation ID in the same transaction.
+    /// Replaying a committed ID skips database, cache, and filesystem changes.
+    /// Audio cleanup is attempted once so replay cannot delete a new file that
+    /// later appears at the same path.
+    func apply(_ mutation: HistoryMutation) throws {
         try initialize()
-        try transaction {
-            try insert(item)
-            try insertStats(HistoryStatsEntry(id: item.id, date: item.date,
-                wordCount: item.wordCount, duration: item.duration))
+        let outcome = try transaction { try applyInTransaction(mutation) }
+
+        if outcome.wasNewlyApplied, let statsEntry = outcome.statsEntry {
+            upsertCachedStats(statsEntry)
         }
-        cachedStats.insert(HistoryStatsEntry(id: item.id, date: item.date,
-            wordCount: item.wordCount, duration: item.duration), at: 0)
+
+        if let audioCleanup = outcome.audioCleanup {
+            try finishAudioCleanup(audioCleanup, operationID: mutation.id)
+        }
+    }
+
+    // Kept as small compatibility helpers for store-level callers. Service
+    // mutations use apply(_:) so their operation IDs survive a restart.
+    func add(_ item: HistoryItem) throws {
+        try apply(HistoryMutation(operation: .add(item)))
     }
 
     func update(id: UUID, transcript: String, modelUsed: String?, transcriptionTime: TimeInterval?) throws {
-        try initialize()
-        try transaction {
-            guard let item = try item(id: id) else { return }
-            let updated = HistoryItem(id: item.id, date: item.date, transcript: transcript,
-                duration: item.duration, audioFileURL: item.audioFileURL,
-                modelUsed: modelUsed ?? item.modelUsed,
-                transcriptionTime: transcriptionTime ?? item.transcriptionTime,
-                detectedLanguage: item.detectedLanguage)
-            try insert(updated)
-            try withStatement("UPDATE stats SET words=? WHERE id=?") { stmt in
-                sqlite3_bind_int64(stmt, 1, Int64(updated.wordCount))
-                try bind(id.uuidString, to: stmt, at: 2)
-                try stepDone(stmt)
-            }
-        }
-        if let index = cachedStats.firstIndex(where: { $0.id == id }),
-           let updated = try item(id: id) {
-            let old = cachedStats[index]
-            cachedStats[index] = HistoryStatsEntry(id: old.id, date: old.date,
-                wordCount: updated.wordCount, duration: old.duration)
-        }
+        try apply(HistoryMutation(operation: .update(.init(
+            id: id, transcript: transcript, modelUsed: modelUsed,
+            transcriptionTime: transcriptionTime))))
     }
 
     func delete(id: UUID, deleteAudioFile: Bool) throws {
-        try initialize()
-        let audioURL = try item(id: id)?.audioFileURL
-        try withStatement("DELETE FROM history WHERE id=?") { stmt in
-            try bind(id.uuidString, to: stmt, at: 1)
-            try stepDone(stmt)
-        }
-        // File cleanup follows successful durable deletion; statistics intentionally remain.
-        if deleteAudioFile, let audioURL, FileManager.default.fileExists(atPath: audioURL.path) {
-            try FileManager.default.removeItem(at: audioURL)
-        }
+        try apply(HistoryMutation(operation: .delete(.init(
+            id: id, deleteAudioFile: deleteAudioFile))))
     }
 
     func clear() throws {
+        try apply(HistoryMutation(operation: .clear))
+    }
+
+    /// Ledger rows are needed only while their operation remains in a readable
+    /// recovery journal. This cleanup is deliberately separate from apply: the
+    /// journal must remove an operation before its replay marker can disappear.
+    func retireAppliedOperation(id: UUID) throws {
         try initialize()
-        try execute("DELETE FROM history")
+        try withStatement("DELETE FROM applied_history_operations WHERE id=?") { stmt in
+            try bind(id.uuidString, to: stmt, at: 1)
+            try stepDone(stmt)
+        }
+    }
+
+    func pruneAppliedOperations(keeping activeIDs: Set<UUID>) throws {
+        try initialize()
+        let staleIDs = try withStatement("SELECT id FROM applied_history_operations") { stmt in
+            var ids: [String] = []
+            while try next(stmt) {
+                guard let text = sqlite3_column_text(stmt, 0) else {
+                    throw HistoryStoreError.invalidRecord
+                }
+                let value = String(cString: text)
+                guard let id = UUID(uuidString: value) else {
+                    throw HistoryStoreError.invalidRecord
+                }
+                if !activeIDs.contains(id) { ids.append(value) }
+            }
+            return ids
+        }
+        guard !staleIDs.isEmpty else { return }
+        try transaction {
+            for id in staleIDs {
+                try withStatement("DELETE FROM applied_history_operations WHERE id=?") { stmt in
+                    try bind(id, to: stmt, at: 1)
+                    try stepDone(stmt)
+                }
+            }
+        }
+    }
+
+    private struct MutationOutcome {
+        let wasNewlyApplied: Bool
+        let statsEntry: HistoryStatsEntry?
+        let audioCleanup: AudioCleanup?
+    }
+
+    private struct AudioCleanup {
+        let path: String
+        let device: UInt64
+        let inode: UInt64
+        let birthSeconds: Int64
+        let birthNanoseconds: Int64
+    }
+
+    private struct FileIdentity {
+        let device: UInt64
+        let inode: UInt64
+        let birthSeconds: Int64
+        let birthNanoseconds: Int64
+    }
+
+    private struct AppliedOperation {
+        let audioCleanup: AudioCleanup?
+    }
+
+    private func applyInTransaction(_ mutation: HistoryMutation) throws -> MutationOutcome {
+        if let applied = try appliedOperation(id: mutation.id) {
+            return MutationOutcome(wasNewlyApplied: false, statsEntry: nil,
+                                   audioCleanup: applied.audioCleanup)
+        }
+
+        var statsEntry: HistoryStatsEntry?
+        var audioCleanup: AudioCleanup?
+        switch mutation.operation {
+        case .add(let item):
+            try insert(item)
+            let entry = HistoryStatsEntry(id: item.id, date: item.date,
+                wordCount: item.wordCount, duration: item.duration)
+            try insertStats(entry)
+            statsEntry = entry
+
+        case .update(let update):
+            if let item = try item(id: update.id) {
+                let updated = HistoryItem(id: item.id, date: item.date,
+                    transcript: update.transcript, duration: item.duration,
+                    audioFileURL: item.audioFileURL,
+                    modelUsed: update.modelUsed ?? item.modelUsed,
+                    transcriptionTime: update.transcriptionTime ?? item.transcriptionTime,
+                    detectedLanguage: item.detectedLanguage)
+                try insert(updated)
+                try withStatement("UPDATE stats SET words=? WHERE id=?") { stmt in
+                    sqlite3_bind_int64(stmt, 1, Int64(updated.wordCount))
+                    try bind(update.id.uuidString, to: stmt, at: 2)
+                    try stepDone(stmt)
+                }
+                if sqlite3_changes(database) > 0,
+                   let existing = cachedStats.first(where: { $0.id == updated.id }) {
+                    // Saved statistics may intentionally differ from transcript
+                    // metadata after legacy migration. Updating text changes only
+                    // the word count in SQLite, so preserve the cached date and
+                    // duration here as well.
+                    statsEntry = HistoryStatsEntry(id: existing.id, date: existing.date,
+                        wordCount: updated.wordCount, duration: existing.duration)
+                }
+            }
+
+        case .delete(let deletion):
+            if deletion.deleteAudioFile,
+               let path = try item(id: deletion.id)?.audioFileURL?.path {
+                audioCleanup = try Self.fileIdentity(atPath: path).map {
+                    AudioCleanup(path: path, device: $0.device, inode: $0.inode,
+                        birthSeconds: $0.birthSeconds,
+                        birthNanoseconds: $0.birthNanoseconds)
+                }
+            }
+            try withStatement("DELETE FROM history WHERE id=?") { stmt in
+                try bind(deletion.id.uuidString, to: stmt, at: 1)
+                try stepDone(stmt)
+            }
+
+        case .clear:
+            try execute("DELETE FROM history")
+        }
+
+        try withStatement("""
+            INSERT INTO applied_history_operations (
+                id,applied_at,audio_path,audio_device,audio_inode,
+                audio_birth_seconds,audio_birth_nanoseconds,audio_cleanup_done)
+            VALUES (?,?,?,?,?,?,?,?)
+            """) { stmt in
+            try bind(mutation.id.uuidString, to: stmt, at: 1)
+            sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
+            if let audioCleanup {
+                try bind(audioCleanup.path, to: stmt, at: 3)
+                sqlite3_bind_int64(stmt, 4, Int64(bitPattern: audioCleanup.device))
+                sqlite3_bind_int64(stmt, 5, Int64(bitPattern: audioCleanup.inode))
+                sqlite3_bind_int64(stmt, 6, audioCleanup.birthSeconds)
+                sqlite3_bind_int64(stmt, 7, audioCleanup.birthNanoseconds)
+                sqlite3_bind_int(stmt, 8, 0)
+            } else {
+                for index in 3...7 { sqlite3_bind_null(stmt, Int32(index)) }
+                sqlite3_bind_int(stmt, 8, 1)
+            }
+            try stepDone(stmt)
+        }
+        return MutationOutcome(wasNewlyApplied: true, statsEntry: statsEntry,
+                               audioCleanup: audioCleanup)
+    }
+
+    private func appliedOperation(id: UUID) throws -> AppliedOperation? {
+        try withStatement("""
+            SELECT audio_path,audio_device,audio_inode,audio_birth_seconds,
+                   audio_birth_nanoseconds,audio_cleanup_done
+            FROM applied_history_operations WHERE id=?
+            """) { stmt in
+            try bind(id.uuidString, to: stmt, at: 1)
+            guard try next(stmt) else { return nil }
+            guard sqlite3_column_int(stmt, 5) == 0,
+                  let pathText = sqlite3_column_text(stmt, 0),
+                  sqlite3_column_type(stmt, 1) != SQLITE_NULL,
+                  sqlite3_column_type(stmt, 2) != SQLITE_NULL,
+                  sqlite3_column_type(stmt, 3) != SQLITE_NULL,
+                  sqlite3_column_type(stmt, 4) != SQLITE_NULL else {
+                return AppliedOperation(audioCleanup: nil)
+            }
+            return AppliedOperation(audioCleanup: AudioCleanup(
+                path: String(cString: pathText),
+                device: UInt64(bitPattern: sqlite3_column_int64(stmt, 1)),
+                inode: UInt64(bitPattern: sqlite3_column_int64(stmt, 2)),
+                birthSeconds: sqlite3_column_int64(stmt, 3),
+                birthNanoseconds: sqlite3_column_int64(stmt, 4)))
+        }
+    }
+
+    private func finishAudioCleanup(_ cleanup: AudioCleanup, operationID: UUID) throws {
+        if let current = try Self.fileIdentity(atPath: cleanup.path),
+           current.device == cleanup.device,
+           current.inode == cleanup.inode,
+           current.birthSeconds == cleanup.birthSeconds,
+           current.birthNanoseconds == cleanup.birthNanoseconds {
+            try FileManager.default.removeItem(atPath: cleanup.path)
+        }
+        // A missing path or different identity means the original file is gone.
+        // Mark cleanup complete before journal retirement so replay never removes
+        // an unrelated replacement at the same path.
+        try withStatement("""
+            UPDATE applied_history_operations SET audio_cleanup_done=1 WHERE id=?
+            """) { stmt in
+            try bind(operationID.uuidString, to: stmt, at: 1)
+            try stepDone(stmt)
+        }
+    }
+
+    private static func fileIdentity(atPath path: String) throws -> FileIdentity? {
+        var information = stat()
+        if path.withCString({ lstat($0, &information) }) != 0 {
+            if errno == ENOENT { return nil }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        return FileIdentity(
+            device: UInt64(information.st_dev),
+            inode: UInt64(information.st_ino),
+            birthSeconds: Int64(information.st_birthtimespec.tv_sec),
+            birthNanoseconds: Int64(information.st_birthtimespec.tv_nsec))
+    }
+
+    private func hasColumn(_ column: String, in table: String) throws -> Bool {
+        try withStatement("PRAGMA table_info(\(table))") { statement in
+            while try next(statement) {
+                if let name = sqlite3_column_text(statement, 1),
+                   String(cString: name) == column { return true }
+            }
+            return false
+        }
+    }
+
+    private func upsertCachedStats(_ entry: HistoryStatsEntry) {
+        if let index = cachedStats.firstIndex(where: { $0.id == entry.id }) {
+            if cachedStats[index].date == entry.date {
+                cachedStats[index] = entry
+                return
+            }
+            cachedStats.remove(at: index)
+        }
+
+        var lowerBound = 0
+        var upperBound = cachedStats.count
+        while lowerBound < upperBound {
+            let middle = lowerBound + (upperBound - lowerBound) / 2
+            if Self.statsEntry(cachedStats[middle], sortsBefore: entry) {
+                lowerBound = middle + 1
+            } else {
+                upperBound = middle
+            }
+        }
+        cachedStats.insert(entry, at: lowerBound)
+    }
+
+    private static func statsEntry(_ lhs: HistoryStatsEntry,
+                                   sortsBefore rhs: HistoryStatsEntry) -> Bool {
+        if lhs.date != rhs.date { return lhs.date > rhs.date }
+        return lhs.id.uuidString > rhs.id.uuidString
     }
 
     private func item(id: UUID) throws -> HistoryItem? {

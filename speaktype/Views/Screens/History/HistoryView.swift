@@ -43,6 +43,18 @@ struct HistoryView: View {
                 .padding(10)
                 .background(Color.bgHover, in: RoundedRectangle(cornerRadius: 8))
                 .padding(.horizontal, 24)
+                if let recoveryError = historyService.recoveryErrorMessage {
+                    HistoryRecoveryBanner(
+                        pendingCount: historyService.pendingMutationCount,
+                        message: recoveryError
+                    ) {
+                        historyService.retryPendingWrites()
+                        Task {
+                            await historyService.waitUntilReady()
+                            await browser.refresh()
+                        }
+                    }
+                }
                 if !browser.rows.isEmpty, let errorMessage = activeError {
                     errorBanner(errorMessage)
                 }

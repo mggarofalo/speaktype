@@ -152,6 +152,28 @@ final class HistoryServiceTests: XCTestCase {
         XCTAssertEqual(restarted.statsEntries, [stat])
     }
 
+    // A legacy archive can contain a live transcript whose statistics row was
+    // already absent. Editing it must not synthesize a cache-only statistic that
+    // disappears on restart.
+    func testUpdateMigratedItemWithoutStatsDoesNotCreatePhantomStatistic() async throws {
+        let item = HistoryItem(
+            id: UUID(), date: Date(), transcript: "original words", duration: 3)
+        let retainedDeletedStat = HistoryStatsEntry(
+            id: UUID(), date: Date(timeIntervalSince1970: 100), wordCount: 7, duration: 8)
+        try await migrate([item], stats: [retainedDeletedStat])
+        XCTAssertEqual(service.statsEntries, [retainedDeletedStat])
+
+        service.updateTranscript(id: item.id, transcript: "replacement has four words")
+        await service.flush()
+
+        XCTAssertEqual(service.items.first?.transcript, "replacement has four words")
+        XCTAssertEqual(service.statsEntries, [retainedDeletedStat])
+        XCTAssertEqual(service.transcriptionCount(), 1)
+        let restarted = makeService()
+        await restarted.waitUntilReady()
+        XCTAssertEqual(restarted.statsEntries, [retainedDeletedStat])
+    }
+
     func testMalformedMigrationRollsBackAndCanRetry() async throws {
         await service.flush()
         service = nil
@@ -166,7 +188,12 @@ final class HistoryServiceTests: XCTestCase {
         service.retryLoading()
         await service.flush()
         XCTAssertNil(service.errorMessage)
+        XCTAssertNil(service.recoveryErrorMessage)
         XCTAssertEqual(service.items.first?.id, entry.id)
+        service.addItem(transcript: "saved after retry", duration: 1)
+        await service.flush()
+        XCTAssertEqual(service.pendingMutationCount, 0)
+        XCTAssertEqual(service.totalItemCount, 2)
     }
 
     // Dismissing a banner must not hide the next independent failure with the same text.

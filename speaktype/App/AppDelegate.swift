@@ -70,13 +70,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             do {
                 try await lifecycle.finishTermination(
-                    flush: {
-                        await HistoryService.shared.flush()
-                        if let message = HistoryService.shared.errorMessage {
-                            throw NSError(domain: "SpeakType.History", code: 1,
-                                          userInfo: [NSLocalizedDescriptionKey: message])
-                        }
-                    },
+                    flush: { try await HistoryService.shared.flushForTermination() },
                     shutdown: { await WhisperService.shared.shutdown() }
                 )
                 self.replyToTerminateOnce()
