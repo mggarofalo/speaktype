@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import speaktype
 
@@ -191,6 +192,88 @@ final class WhisperServiceLoadingTests: XCTestCase {
         XCTAssertFalse(service.isLoading)
     }
 
+    // Regression: switching engines used to leave the global isInitialized
+    // flag true, so dictation skipped loading and called the newly selected,
+    // unloaded backend. Readiness must include the selected engine.
+    func testReadinessRequiresExactActiveEngineAndSwitchingBackReusesResidentModel() async throws {
+        let loader = RecordingModelLoader()
+        let selection = EngineSelection(.whispercpp)
+        let service = makeService(loader: loader, selection: selection)
+
+        try await service.loadModel(variant: "shared-variant")
+        XCTAssertTrue(service.isReadyToTranscribe(variant: "shared-variant"))
+
+        selection.engine = .whisperkit
+        XCTAssertTrue(service.isInitialized, "This legacy flag cannot identify the selected engine")
+        XCTAssertFalse(service.isReadyToTranscribe(variant: "shared-variant"))
+        await assertNotInitializedWhenTranscribing(service)
+
+        try await service.loadModel(variant: "shared-variant")
+        XCTAssertTrue(service.isReadyToTranscribe(variant: "shared-variant"))
+        XCTAssertEqual(loader.requestCount, 2)
+
+        selection.engine = .whispercpp
+        XCTAssertFalse(service.isReadyToTranscribe(variant: "shared-variant"))
+        try await service.loadModel(variant: "shared-variant")
+
+        XCTAssertTrue(service.isReadyToTranscribe(variant: "shared-variant"))
+        XCTAssertEqual(loader.requestCount, 2, "The resident whisper.cpp model should be reused")
+        XCTAssertEqual(loader.requests, [
+            LoadRequest(engine: .whispercpp, variant: "shared-variant"),
+            LoadRequest(engine: .whisperkit, variant: "shared-variant")
+        ])
+    }
+
+    func testFailedEngineSwitchRemainsUnreadyAndPreservesModelNotDownloadedError() async throws {
+        let loader = RecordingModelLoader()
+        let selection = EngineSelection(.whispercpp)
+        let service = WhisperService(
+            modelLoader: { engine, variant in
+                if engine == .whisperkit {
+                    throw WhisperService.TranscriptionError.modelNotDownloaded
+                }
+                loader.load(engine: engine, variant: variant)
+            },
+            engineSelector: { selection.engine })
+
+        try await service.loadModel(variant: "shared-variant")
+        selection.engine = .whisperkit
+
+        do {
+            try await service.loadModel(variant: "shared-variant")
+            XCTFail("An unavailable model must fail the engine switch")
+        } catch WhisperService.TranscriptionError.modelNotDownloaded {
+        } catch {
+            XCTFail("Unexpected engine-switch error: \(error)")
+        }
+
+        XCTAssertFalse(service.isReadyToTranscribe(variant: "shared-variant"))
+        await assertNotInitializedWhenTranscribing(service)
+    }
+
+    func testMissingWhisperKitFolderThrowsActionableModelNotDownloadedError() async {
+        let variant = "speaktype-test-missing-\(UUID().uuidString)"
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: ModelStorage.modelFolderURL(variant: variant).path))
+        let service = WhisperService(engineSelector: { .whisperkit })
+
+        do {
+            try await service.loadModel(variant: variant)
+            XCTFail("A missing WhisperKit folder must fail before framework initialization")
+        } catch WhisperService.TranscriptionError.modelNotDownloaded {
+            XCTAssertEqual(
+                WhisperService.TranscriptionError.modelNotDownloaded.localizedDescription,
+                "Model not downloaded yet — download it from Settings → AI Models")
+        } catch {
+            XCTFail("Unexpected missing-model error: \(error)")
+        }
+
+        XCTAssertFalse(service.isLoading)
+        XCTAssertFalse(service.isInitialized)
+        XCTAssertFalse(service.isReadyToTranscribe(variant: variant))
+    }
+
     private func makeService(
         loader: SuspendedModelLoader,
         selection: EngineSelection
@@ -200,6 +283,32 @@ final class WhisperServiceLoadingTests: XCTestCase {
                 try await loader.load(engine: engine, variant: variant)
             },
             engineSelector: { selection.engine })
+    }
+
+    private func makeService(
+        loader: RecordingModelLoader,
+        selection: EngineSelection
+    ) -> WhisperService {
+        WhisperService(
+            modelLoader: { engine, variant in
+                loader.load(engine: engine, variant: variant)
+            },
+            engineSelector: { selection.engine })
+    }
+
+    private func assertNotInitializedWhenTranscribing(
+        _ service: WhisperService,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        do {
+            _ = try await service.transcribe(
+                audioFile: URL(fileURLWithPath: "/nonexistent/speaktype-readiness.wav"))
+            XCTFail("An inactive engine must not transcribe", file: file, line: line)
+        } catch WhisperService.TranscriptionError.notInitialized {
+        } catch {
+            XCTFail("Unexpected transcription error: \(error)", file: file, line: line)
+        }
     }
 
     private func assertSimulatedFailure(
@@ -305,6 +414,7 @@ private final class SuspendedModelLoader {
 @MainActor
 private final class RecordingModelLoader {
     private(set) var requests: [LoadRequest] = []
+    var requestCount: Int { requests.count }
 
     func load(engine: TranscriptionEngineKind, variant: String) {
         requests.append(LoadRequest(engine: engine, variant: variant))

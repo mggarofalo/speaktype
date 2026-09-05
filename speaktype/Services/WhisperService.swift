@@ -118,7 +118,8 @@ class WhisperService {
     private let loadCoordinator = ModelLoadCoordinator()
     private let modelLoader: ModelLoader?
     private let engineSelector: EngineSelector
-    private var loadedModelKey: ModelLoadKey?
+    private var loadedModelKeys: [ModelLoadKey] = []
+    private var activeModelKey: ModelLoadKey?
 
     /// Device RAM in GB (cached on init)
     static let deviceRAMGB: Int = {
@@ -203,13 +204,24 @@ class WhisperService {
         try await loadCoordinator.run(key: key) { [self] in
             // Check the cache only after admission: another model may already
             // be queued even though its task has not invalidated readiness yet.
-            guard !isLoaded(key) else { return }
+            if isLoaded(key) {
+                activate(key)
+                return
+            }
             try await performLoad(key: key)
         }
     }
 
+    /// Whether the selected engine is ready to transcribe with this exact
+    /// model. Callers must use this instead of the legacy global state, which
+    /// cannot distinguish two engines that use the same model variant.
+    func isReadyToTranscribe(variant: String) -> Bool {
+        let key = ModelLoadKey(engine: engineSelector(), variant: variant)
+        return activeModelKey == key && isLoaded(key)
+    }
+
     private func isLoaded(_ key: ModelLoadKey) -> Bool {
-        guard isInitialized, loadedModelKey == key else { return false }
+        guard loadedModelKeys.contains(key) else { return false }
         if modelLoader != nil { return true }
 
         switch key.engine {
@@ -224,18 +236,28 @@ class WhisperService {
         // Validate before invalidating a previously loaded model. Downloads are
         // handled by the model picker, never by the load/warmup operation.
         var cppModelURL: URL?
-        if modelLoader == nil, key.engine == .whispercpp {
-            guard WhisperCppModelStorage.isDownloaded(variant: key.variant),
-                let url = WhisperCppModelStorage.modelURL(for: key.variant)
-            else {
-                throw TranscriptionError.modelNotDownloaded
+        if modelLoader == nil {
+            switch key.engine {
+            case .whispercpp:
+                guard WhisperCppModelStorage.isDownloaded(variant: key.variant),
+                    let url = WhisperCppModelStorage.modelURL(for: key.variant)
+                else {
+                    throw TranscriptionError.modelNotDownloaded
+                }
+                cppModelURL = url
+            case .whisperkit, .mlx:
+                guard FileManager.default.fileExists(
+                    atPath: ModelStorage.modelFolderURL(variant: key.variant).path)
+                else {
+                    throw TranscriptionError.modelNotDownloaded
+                }
             }
-            cppModelURL = url
         }
 
         isLoading = true
         isInitialized = false
-        loadedModelKey = nil
+        activeModelKey = nil
+        invalidateLoadedModel(for: key.engine)
         loadingStage = "Preparing model..."
         defer {
             isLoading = false
@@ -251,9 +273,24 @@ class WhisperService {
             try await loadWhisperKit(variant: key.variant)
         }
 
+        loadedModelKeys.append(key)
+        activate(key)
+    }
+
+    private func activate(_ key: ModelLoadKey) {
         currentModelVariant = key.variant
-        loadedModelKey = key
+        activeModelKey = key
         isInitialized = true
+    }
+
+    private func invalidateLoadedModel(for engine: TranscriptionEngineKind) {
+        switch engine {
+        case .whispercpp:
+            loadedModelKeys.removeAll { $0.engine == .whispercpp }
+        case .whisperkit, .mlx:
+            // These routes currently share WhisperKit's single in-memory pipe.
+            loadedModelKeys.removeAll { $0.engine == .whisperkit || $0.engine == .mlx }
+        }
     }
 
     private func loadWhisperKit(variant: String) async throws {
@@ -321,9 +358,19 @@ class WhisperService {
     }
 
     func transcribe(audioFile: URL, language: String = "auto") async throws -> String {
+        // Capture the route once and require the active model to belong to it.
+        // A preference change must never send audio to a previously loaded
+        // backend merely because the legacy global flag is still true.
+        let engine = engineSelector()
+        guard let activeModelKey,
+            activeModelKey.engine == engine,
+            isLoaded(activeModelKey)
+        else {
+            throw TranscriptionError.notInitialized
+        }
+
         // whisper.cpp engine path (beta benchmarking).
-        if TranscriptionEngineSelection.current == .whispercpp {
-            guard isInitialized else { throw TranscriptionError.notInitialized }
+        if engine == .whispercpp {
             guard FileManager.default.fileExists(atPath: audioFile.path) else {
                 throw TranscriptionError.fileNotFound
             }
@@ -348,7 +395,7 @@ class WhisperService {
             return output.text
         }
 
-        guard let pipe = pipe, isInitialized else {
+        guard let pipe = pipe else {
             throw TranscriptionError.notInitialized
         }
 

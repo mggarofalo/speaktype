@@ -333,7 +333,7 @@ struct HistoryView: View {
         retranscribingItemID = item.id
         TranscriptionLifecycle.shared.perform {
             do {
-                if !whisperService.isInitialized || whisperService.currentModelVariant != variant {
+                if !whisperService.isReadyToTranscribe(variant: variant) {
                     try await whisperService.loadModel(variant: variant)
                 }
                 let start = Date()

@@ -619,8 +619,7 @@ struct MiniRecorderView: View {
         debugLog("processRecording started with url: \(url.lastPathComponent)")
         do {
             // Ensure model is loaded before transcribing
-            if !whisperService.isInitialized || whisperService.currentModelVariant != selectedModel
-            {
+            if !whisperService.isReadyToTranscribe(variant: selectedModel) {
                 debugLog("Loading model: \(selectedModel)")
                 await MainActor.run { statusMessage = "Warming up model — first use is slower..." }
                 do {
@@ -628,8 +627,9 @@ struct MiniRecorderView: View {
                     debugLog("Model loaded successfully")
                 } catch {
                     debugLog("Model load failed: \(error.localizedDescription)")
+                    let loadError = error.localizedDescription
                     await MainActor.run {
-                        statusMessage = "Model load failed"
+                        statusMessage = loadError
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                             self.isProcessing = false
                             self.onCancel?()

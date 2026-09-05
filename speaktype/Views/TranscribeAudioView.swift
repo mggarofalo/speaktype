@@ -266,7 +266,7 @@ struct TranscribeAudioView: View {
         do {
             let variant = selectedModel.isEmpty ? whisperService.currentModelVariant : selectedModel
             guard !variant.isEmpty else { throw WhisperService.TranscriptionError.modelNotDownloaded }
-            if !whisperService.isInitialized || whisperService.currentModelVariant != variant {
+            if !whisperService.isReadyToTranscribe(variant: variant) {
                 try await whisperService.loadModel(variant: variant)
             }
             transcribedText = try await whisperService.transcribe(audioFile: url, language: transcriptionLanguage)
