@@ -114,4 +114,3 @@ struct HistoryRow: Identifiable, Sendable {
         preview = String(compactText.prefix(280))
     }
 }
-
