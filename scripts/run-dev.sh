@@ -15,6 +15,9 @@ fi
 
 mkdir -p "$HOME/Applications"
 
+# Ensure the gitignored whisper.cpp xcframework is present before building.
+bash scripts/fetch-whisper-xcframework.sh
+
 echo "Building ${APP_NAME} from current checkout..."
 xcodebuild \
   -project speaktype.xcodeproj \

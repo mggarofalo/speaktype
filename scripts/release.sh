@@ -189,6 +189,10 @@ fi
 if [ "$SKIP_CHECKS" = true ]; then
   echo "⚠️  Skipping the build + test gate (--skip-checks)."
 else
+  # The vendored whisper.cpp binary is gitignored and may be absent on a fresh
+  # checkout or a machine that has not built SpeakType before.
+  bash scripts/fetch-whisper-xcframework.sh
+
   echo "🔨 Building Release..."
   xcodebuild -project speaktype.xcodeproj -scheme speaktype -configuration Release build \
     >/tmp/speaktype-release-build.log 2>&1 \

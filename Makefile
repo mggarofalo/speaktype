@@ -1,6 +1,12 @@
 # Makefile for SpeakType
 
-.PHONY: help build clean clean-dev test coverage lint format run run-dev run-release release setup logs logs-live logs-errors logs-export install uninstall reinstall
+.PHONY: help ensure-whisper build clean clean-dev test coverage lint format run run-dev run-release release setup logs logs-live logs-errors logs-export install uninstall reinstall
+
+# Release builds use a repository-local DerivedData directory. Every consumer
+# below refers to this exact product instead of guessing among Xcode caches.
+RELEASE_DERIVED_DATA_PATH := $(CURDIR)/build/release-derived
+RELEASE_PRODUCTS_PATH := $(RELEASE_DERIVED_DATA_PATH)/Build/Products/Release
+RELEASE_APP_PATH := $(RELEASE_PRODUCTS_PATH)/speaktype.app
 
 # Default target
 help:
@@ -44,7 +50,13 @@ help:
 setup:
 	@echo "Setting up project..."
 	@which swiftlint > /dev/null || echo "⚠️  SwiftLint not installed. Install with: brew install swiftlint"
+	@bash scripts/fetch-whisper-xcframework.sh
 	@echo "✅ Setup complete!"
+
+# The vendored binary is intentionally gitignored, so make-driven builds fetch
+# it automatically on a fresh checkout. The script is a no-op when it exists.
+ensure-whisper:
+	@bash scripts/fetch-whisper-xcframework.sh
 
 # Stamp BuildInfo.swift with the current compile timestamp
 stamp-build-info:
@@ -53,22 +65,28 @@ stamp-build-info:
 	echo "let buildTimestamp = \"$$TIMESTAMP\"" >> speaktype/Constants/BuildInfo.swift
 
 # Build the project
-build: stamp-build-info
+build: ensure-whisper stamp-build-info
 	@echo "Building SpeakType..."
 	xcodebuild -scheme speaktype -configuration Debug build
 
 # Build for release
-build-release:
+build-release: ensure-whisper
 	@echo "Building SpeakType (Release)..."
-	@xcodebuild -scheme speaktype -configuration Release build 2>&1 | grep -E "(error:|BUILD)" || true
+	xcodebuild -project speaktype.xcodeproj -scheme speaktype -configuration Release \
+		-derivedDataPath "$(RELEASE_DERIVED_DATA_PATH)" build
 
 # Run release build
 run-release:
 	@echo "Running SpeakType (Release)..."
-	@open $$(find ~/Library/Developer/Xcode/DerivedData/speaktype-*/Build/Products/Release -name "speaktype.app" -type d | head -1)
+	@if [ ! -d "$(RELEASE_APP_PATH)" ]; then \
+		echo "❌ Error: No Make-built Release app found. Run 'make build-release' first."; \
+		exit 1; \
+	fi; \
+	echo "✅ Running App at: $(RELEASE_APP_PATH)"; \
+	open "$(RELEASE_APP_PATH)"
 
 # Run the application
-run: stamp-build-info
+run: ensure-whisper stamp-build-info
 	@echo "Running SpeakType..."
 	@xcodebuild -scheme speaktype -configuration Debug build 2>&1 | grep -E "(error:|BUILD)" || true
 	@open $$(find ~/Library/Developer/Xcode/DerivedData/speaktype-*/Build/Products/Debug -name "speaktype.app" -type d | head -1)
@@ -78,23 +96,23 @@ run-dev: stamp-build-info
 	@./scripts/run-dev.sh
 
 # Run all tests
-test:
+test: ensure-whisper
 	@echo "Running tests..."
 	xcodebuild test -scheme speaktype -destination 'platform=macOS'
 
 # Run unit tests only
-test-unit:
+test-unit: ensure-whisper
 	@echo "Running unit tests..."
 	xcodebuild test -scheme speaktype -destination 'platform=macOS' -only-testing:speaktypeTests
 
 # Run UI tests only
-test-ui:
+test-ui: ensure-whisper
 	@echo "Running UI tests..."
 	xcodebuild test -scheme speaktype -destination 'platform=macOS' -only-testing:speaktypeUITests
 
 # Run unit tests with code coverage and print a per-file report for the app target
 COVERAGE_RESULT := /tmp/speaktype-coverage.xcresult
-coverage:
+coverage: ensure-whisper
 	@echo "Running unit tests with coverage..."
 	@rm -rf $(COVERAGE_RESULT)
 	xcodebuild test -scheme speaktype -destination 'platform=macOS' \
@@ -133,7 +151,7 @@ clean-dev:
 	@./scripts/clean-dev.sh
 
 # Archive the application
-archive:
+archive: ensure-whisper
 	@echo "Archiving SpeakType..."
 	xcodebuild archive -scheme speaktype -archivePath build/speaktype.xcarchive
 
@@ -142,7 +160,8 @@ package:
 	@echo "📦 Packaging SpeakType for distribution..."
 	@make build-release
 	@mkdir -p dist
-	@cd build/Release && zip -r ../../dist/SpeakType.zip speaktype.app
+	@rm -f dist/SpeakType.zip
+	@cd "$(RELEASE_PRODUCTS_PATH)" && zip -r "$(CURDIR)/dist/SpeakType.zip" speaktype.app
 	@echo "✅ Created dist/SpeakType.zip"
 	@ls -lh dist/SpeakType.zip
 
@@ -152,16 +171,12 @@ dmg:
 	@make build-release
 	@mkdir -p dist
 	@rm -f dist/SpeakType.dmg
-	@# Find the app
-	@APP_PATH=$$(find ~/Library/Developer/Xcode/DerivedData/speaktype-*/Build/Products/Release -name "speaktype.app" -type d 2>/dev/null | head -n 1); \
-	if [ -z "$$APP_PATH" ]; then \
-		APP_PATH=$$(find build -name "speaktype.app" -type d 2>/dev/null | head -n 1); \
-	fi; \
-	if [ -z "$$APP_PATH" ]; then \
-		echo "❌ Error: Could not find speaktype.app!"; \
+	@# Use the product from the controlled Release build above.
+	@if [ ! -d "$(RELEASE_APP_PATH)" ]; then \
+		echo "❌ Error: Expected Release app at $(RELEASE_APP_PATH)"; \
 		exit 1; \
 	fi; \
-	echo "✅ Found App at: $$APP_PATH"; \
+	echo "✅ Using App at: $(RELEASE_APP_PATH)"; \
 	if [ ! -f "dmg-assets/dmg-background.png" ]; then \
 		echo "Creating background with arrow..."; \
 		cd dmg-assets && python3 create-background.py 2>/dev/null || ./create-background.sh 2>/dev/null || echo "Using default"; \
@@ -178,7 +193,7 @@ dmg:
 		--hide-extension "speaktype.app" \
 		--app-drop-link 480 170 \
 		"dist/SpeakType.dmg" \
-		"$$APP_PATH"
+		"$(RELEASE_APP_PATH)"
 	@echo "✅ Created dist/SpeakType.dmg"
 	@ls -lh dist/SpeakType.dmg
 
@@ -207,17 +222,13 @@ xcode:
 install:
 	@echo "📦 Installing SpeakType to /Applications..."
 	@make build-release
-	@APP_PATH=$$(find ~/Library/Developer/Xcode/DerivedData/speaktype-*/Build/Products/Release -name "speaktype.app" -type d 2>/dev/null | head -n 1); \
-	if [ -z "$$APP_PATH" ]; then \
-		APP_PATH=$$(find build -name "speaktype.app" -type d 2>/dev/null | head -n 1); \
-	fi; \
-	if [ -z "$$APP_PATH" ]; then \
-		echo "❌ Error: Could not find speaktype.app!"; \
+	@if [ ! -d "$(RELEASE_APP_PATH)" ]; then \
+		echo "❌ Error: Expected Release app at $(RELEASE_APP_PATH)"; \
 		exit 1; \
 	fi; \
-	echo "✅ Found App at: $$APP_PATH"; \
+	echo "✅ Installing App from: $(RELEASE_APP_PATH)"; \
 	rm -rf /Applications/SpeakType.app 2>/dev/null || true; \
-	cp -R "$$APP_PATH" /Applications/SpeakType.app; \
+	ditto "$(RELEASE_APP_PATH)" /Applications/SpeakType.app; \
 	echo "✅ Installed to /Applications/SpeakType.app"
 
 # Full uninstall - removes ALL data and permissions
