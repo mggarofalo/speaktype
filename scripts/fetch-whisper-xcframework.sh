@@ -3,7 +3,8 @@
 # Downloads the prebuilt whisper.cpp xcframework (Metal-enabled) from the
 # ggml-org/whisper.cpp GitHub release and unpacks it into the local WhisperCPP
 # package at Vendor/WhisperCPP/whisper.xcframework. The binary is gitignored, so
-# run this once after checkout before building the beta with the whisper.cpp engine.
+# run this once after a fresh checkout before building SpeakType. Make-driven
+# builds and the release scripts invoke it automatically.
 
 set -euo pipefail
 
